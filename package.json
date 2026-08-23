@@ -23,6 +23,7 @@
   "author": "davidhlp",
   "license": "MIT",
   "devDependencies": {
+    "@oh-my-pi/pi-coding-agent": "18.0.0",
     "@types/bun": "^1.4.0",
     "@types/node": "^26.2.0",
     "typescript": "^7.0.2"

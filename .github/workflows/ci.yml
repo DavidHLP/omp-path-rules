@@ -26,7 +26,7 @@ jobs:
         run: bun run typecheck
 
   test:
-    name: Unit & Regression Tests (Bun)
+    name: Unit & OMP Loader Tests (Bun)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -43,7 +43,7 @@ jobs:
       - name: Run Test Suite
         run: bun test
 
-  simulated-e2e:
+  simulated-context-e2e:
     name: Simulated Context Lifecycle E2E
     runs-on: ubuntu-latest
     steps:
@@ -142,17 +142,12 @@ jobs:
             console.log("All context lifecycle checks passed successfully!");
           '
 
-  real-omp-e2e:
-    name: Actual OMP CLI & Extension Loader E2E
+  omp-official-loader-e2e:
+    name: Official OMP Extension Loader E2E
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -162,22 +157,36 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Install official OMP package
-        run: npm install -g @oh-my-pi/pi-coding-agent@18.0.0
-
-      - name: Verify OMP CLI installation
+      - name: Execute Official OMP Loader Verification
         run: |
-          which omp
-          omp --version
+          bun -e '
+            import * as path from "node:path";
+            import { loadExtensions } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 
-      - name: Test OMP official extension loader
-        run: |
-          # Verify that OMP CLI loads our extension entrypoint without syntax or runtime initialization errors
-          omp --extension ./src/index.ts --help
+            const extensionEntry = path.resolve("src/index.ts");
+            const result = await loadExtensions([extensionEntry], process.cwd());
 
-      - name: Test OMP plugin manifest discovery
-        run: |
-          # Link this project directory as an OMP extension package
-          mkdir -p ~/.omp/agent/extensions
-          ln -s "$(pwd)/src/index.ts" ~/.omp/agent/extensions/omp-path-rules.ts
-          omp --help
+            console.log("Loader errors count:", result.errors.length);
+            if (result.errors.length > 0) {
+              console.error("Loader errors:", result.errors);
+              throw new Error("Official OMP extension loader encountered errors loading src/index.ts");
+            }
+
+            console.log("Loaded extensions count:", result.extensions.length);
+            if (result.extensions.length !== 1) {
+              throw new Error(`Expected exactly 1 extension, got ${result.extensions.length}`);
+            }
+
+            const loaded = result.extensions[0];
+            console.log("Loaded extension label:", loaded.label);
+            console.log("Loaded extension resolvedPath:", loaded.resolvedPath);
+
+            if (loaded.label !== "omp-path-rules") {
+              throw new Error(`Expected label omp-path-rules, got ${loaded.label}`);
+            }
+            if (loaded.resolvedPath !== extensionEntry) {
+              throw new Error(`Expected resolvedPath ${extensionEntry}, got ${loaded.resolvedPath}`);
+            }
+
+            console.log("✓ Official OMP extension loader successfully initialized omp-path-rules without errors!");
+          '
