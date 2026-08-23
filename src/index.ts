@@ -89,8 +89,11 @@ export default function ompPathRules(pi: ExtensionAPI): void {
         .join("|");
       if (ruleSetKey !== lastNotifiedRuleSet) {
         if (matched.length > 0) {
-          const details = matched.map((item) => item.rule.id).join(", ");
-          ctx.ui?.notify?.(`[path-rules] Loaded rules: ${details}`, "info");
+          const ruleLines = matched.map((item, index) => {
+            const branch = index === matched.length - 1 ? "'--" : "|--";
+            return `   ${branch} ${item.rule.id}`;
+          });
+          ctx.ui?.notify?.(`\x1b[36m[path-rules]\x1b[0m Loaded rules\n${ruleLines.join("\n")}`, "info");
         }
         lastNotifiedRuleSet = ruleSetKey;
       }
