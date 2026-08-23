@@ -121,21 +121,37 @@ node -e '
 echo "==> 3. Lockfile Parity Check (package-lock.json vs package.json)"
 # The security audit runs against package-lock.json while installs use bun.lock.
 # If package-lock.json drifts from package.json, npm audit evaluates the WRONG tree.
+#
+# Comparison is done on the RESOLVED DEPENDENCY TREE (packages -> versions), not on
+# raw bytes: different npm majors format the lockfile differently, and a byte-level
+# diff would fail on environment grounds instead of real drift.
 LOCKFILE_BACKUP="$(mktemp)"
 cp package-lock.json "$LOCKFILE_BACKUP"
 PARITY_OK=0
-if npm i --package-lock-only --no-audit --ignore-scripts >/dev/null 2>&1 && diff -q "$LOCKFILE_BACKUP" package-lock.json >/dev/null 2>&1; then
-  PARITY_OK=1
+if npm i --package-lock-only --no-audit --ignore-scripts >/dev/null 2>&1; then
+  if node -e '
+    const fs = require("fs");
+    const tree = (f) => {
+      const lock = JSON.parse(fs.readFileSync(f, "utf8"));
+      return JSON.stringify(
+        Object.entries(lock.packages || {}).map(([k, v]) => [k, v.version]).sort()
+      );
+    };
+    process.exit(tree(process.argv[1]) === tree(process.argv[2]) ? 0 : 1);
+  ' "$LOCKFILE_BACKUP" package-lock.json; then
+    PARITY_OK=1
+  fi
 fi
 # Always restore the committed lockfile so the workspace stays clean.
 cp "$LOCKFILE_BACKUP" package-lock.json
 rm -f "$LOCKFILE_BACKUP"
 if [ "$PARITY_OK" -ne 1 ]; then
-  echo "❌ Lockfile parity check failed: package-lock.json is out of sync with package.json."
+  echo "❌ Lockfile parity check failed: package-lock.json does not resolve the same"
+  echo "   dependency tree as package.json requires."
   echo "   Run: npm i --package-lock-only --no-audit --ignore-scripts && git add package-lock.json"
   exit 1
 fi
-echo "✓ package-lock.json is in sync with package.json."
+echo "✓ package-lock.json resolves the same dependency tree as package.json."
 
 echo "==> 4. Lockfile Integrity Check"
 bun pm hash-print > /dev/null
