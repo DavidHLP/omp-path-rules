@@ -56,6 +56,22 @@ export interface ContextEvent {
   [key: string]: unknown;
 }
 
+export interface ReadTelemetry {
+  toolCallId: string;
+  path: string;
+  resolvedPath?: string;
+  fileSize?: number;
+  totalLines?: number;
+  startedAt: number;
+  durationMs?: number;
+}
+
+export interface TurnUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+}
+
 export interface ExtensionTheme {
   fg(color: string, text: string): string;
 }
@@ -80,6 +96,18 @@ export interface ExtensionCommandContext extends ExtensionContext {
   reload(): Promise<void>;
 }
 
+export type ExtensionEvent = {
+  type?: string;
+  toolCallId?: string;
+  toolName?: string;
+  args?: unknown;
+  result?: unknown;
+  input?: Record<string, unknown>;
+  details?: unknown;
+  message?: unknown;
+  [key: string]: unknown;
+};
+
 export interface ExtensionAPI {
   setLabel(label: string): void;
   on(
@@ -95,6 +123,14 @@ export interface ExtensionAPI {
   on(
     event: "session_start",
     handler: (event: unknown, ctx: ExtensionContext) => Promise<void> | void
+  ): void;
+  on(
+    event:
+      | "tool_execution_start"
+      | "tool_execution_end"
+      | "tool_result"
+      | "turn_end",
+    handler: (event: ExtensionEvent, ctx: ExtensionContext) => Promise<unknown> | unknown
   ): void;
   on(
     event: string,
