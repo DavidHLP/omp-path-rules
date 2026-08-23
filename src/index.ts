@@ -21,9 +21,9 @@ export default function ompPathRules(pi: ExtensionAPI): void {
 
   const scanner = new RuleScanner();
   let lastNotifiedRuleSet = "";
-
   // 1. Session start lifecycle hook
   pi.on("session_start", async (_event, ctx) => {
+    lastNotifiedRuleSet = "";
     try {
       const rules = await scanner.scan(ctx.cwd, pi.logger);
       const pathRulesCount = rules.filter((r) => r.kind === "path_rule").length;
@@ -82,7 +82,10 @@ export default function ompPathRules(pi: ExtensionAPI): void {
       }
 
       const ruleSetKey = matched
-        .map((item) => `${item.rule.id}:${item.matchedPaths.join(",")}`)
+        .map(
+          (item) =>
+            `${item.rule.id}:${[...item.matchedPaths].sort().join(",")}`
+        )
         .join("|");
       if (ruleSetKey !== lastNotifiedRuleSet) {
         if (matched.length > 0) {
