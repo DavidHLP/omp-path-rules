@@ -116,6 +116,12 @@ TTSR rule  -> inspect or interrupt execution when its condition is met
 Path-rule activation is transient: rules are recomputed for each turn and
 removed when the current active paths no longer match. This is separate from
 the native TTSR lifecycle.
+
+When the extension has a UI, the `path-rules` status shows the number of
+currently active rules. The extension also sends a notification when the
+active rule set changes, including the matched rule IDs and paths. Repeated
+context refreshes with the same active rules do not create duplicate
+notifications.
 ---
 
 ## Slash Commands

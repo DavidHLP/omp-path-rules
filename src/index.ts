@@ -20,6 +20,7 @@ export default function ompPathRules(pi: ExtensionAPI): void {
   pi.setLabel("omp-path-rules");
 
   const scanner = new RuleScanner();
+  let lastNotifiedRuleSet = "";
 
   // 1. Session start lifecycle hook
   pi.on("session_start", async (_event, ctx) => {
@@ -51,16 +52,17 @@ export default function ompPathRules(pi: ExtensionAPI): void {
     try {
       // Step A: Refresh rules from cache / disk
       const rules = await scanner.scan(ctx.cwd, pi.logger);
-
-      // Step B: Extract active paths from recent turn
       const activePaths = extractActivePaths(messages, ctx.cwd);
       if (activePaths.length === 0) {
         // Strip previous injected rules if any and exit
         const cleanMessages = injectRulesIntoMessages(messages, null);
         ctx.ui?.setStatus?.("path-rules", undefined);
+        if (lastNotifiedRuleSet !== "") {
+          ctx.ui?.notify?.("[path-rules] Cleared active rules (no matching paths).", "info");
+          lastNotifiedRuleSet = "";
+        }
         return { messages: cleanMessages };
       }
-
       // Step C: Match active paths against rule globs
       const matched = matchActiveRules(rules, activePaths);
 
@@ -77,6 +79,21 @@ export default function ompPathRules(pi: ExtensionAPI): void {
         } else {
           ctx.ui.setStatus("path-rules", undefined);
         }
+      }
+
+      const ruleSetKey = matched
+        .map((item) => `${item.rule.id}:${item.matchedPaths.join(",")}`)
+        .join("|");
+      if (ruleSetKey !== lastNotifiedRuleSet) {
+        if (matched.length > 0) {
+          const details = matched
+            .map((item) => `${item.rule.id} [${item.matchedPaths.join(", ")}]`)
+            .join("; ");
+          ctx.ui?.notify?.(`[path-rules] Loaded ${matched.length} rule(s): ${details}`, "info");
+        } else {
+          ctx.ui?.notify?.("[path-rules] No matching rules; cleared active path rules.", "info");
+        }
+        lastNotifiedRuleSet = ruleSetKey;
       }
 
       return { messages: updatedMessages };
