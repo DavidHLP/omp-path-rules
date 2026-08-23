@@ -1,8 +1,9 @@
 # CI pipeline structured after codebase-memory-mcp architectural pattern:
 # 1. Modular reusable sub-workflows (_lint, _security, _test, _e2e)
 # 2. Concurrency groups to cancel superseded in-flight jobs
-# 3. Path change detection to optimize turnaround time
-# 4. Aggregated gate check (`ci-ok`) providing a single stable branch protection context
+# 3. Aggregated gate check (`ci-ok`) providing a single stable branch protection context.
+#    NOTE: ci-ok treats "skipped" as failure by default (see scripts/ci/require-all-green.sh),
+#    so no stage can be silently skipped while the gate stays green.
 name: CI
 
 on:
@@ -23,23 +24,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ── Change Detection ────────────────────────────────────────────────────────
-  changes:
-    name: Change Detection
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      code: ${{ steps.filter.outputs.code }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Detect Code Changes
-        id: filter
-        run: |
-          # Default to true on push / full verification
-          echo "code=true" >> "$GITHUB_OUTPUT"
-
   # ── Stage 1: Lint & Strict Typecheck ───────────────────────────────────────
   lint:
     name: lint
@@ -69,7 +53,7 @@ jobs:
   # ── Stage 5: Aggregate Status Gate (ci-ok) ──────────────────────────────────
   ci-ok:
     name: ci-ok
-    needs: [changes, lint, security, test, e2e]
+    needs: [lint, security, test, e2e]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
