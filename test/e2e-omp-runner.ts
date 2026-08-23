@@ -9,39 +9,41 @@ async function runRealOmpE2ETest(): Promise<void> {
   const serverInstance = await startMockOpenAiServer(19988);
 
   const tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "omp-e2e-home-"));
-  const agentDir = path.join(tmpHome, ".omp", "agent");
+  const dotOmpDir = path.join(tmpHome, ".omp");
+  const agentDir = path.join(dotOmpDir, "agent");
   const agentRulesDir = path.join(agentDir, "rules");
-  const homeRulesDir = path.join(tmpHome, ".omp", "rules");
+  const homeRulesDir = path.join(dotOmpDir, "rules");
+  await fs.mkdir(dotOmpDir, { recursive: true });
   await fs.mkdir(agentDir, { recursive: true });
   await fs.mkdir(agentRulesDir, { recursive: true });
   await fs.mkdir(homeRulesDir, { recursive: true });
 
   // 1. Configure user-level models.yml with full OMP schema compliance
-  await fs.writeFile(
-    path.join(agentDir, "models.yml"),
-    `providers:
-  mock-provider:
-    name: mock-provider
+  const modelsYmlContent = `providers:
+  mock-openai:
+    id: mock-openai
+    name: Mock OpenAI Provider
     api: openai-completions
-    apiKey: MOCK_PROVIDER_API_KEY
     baseUrl: http://127.0.0.1:19988/v1
+    apiKey: mock-key
     models:
-      - id: gpt-5.6-luna
-        name: gpt-5.6-luna
-        reasoning: true
-        input: ["text"]
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+      - id: mock-model
+        name: Mock Fast Model
         contextWindow: 128000
         maxTokens: 4096
-`
-  );
+        supportsTools: true
+`;
+
+  await fs.writeFile(path.join(agentDir, "models.yml"), modelsYmlContent);
+  await fs.writeFile(path.join(dotOmpDir, "models.yml"), modelsYmlContent);
 
   // 2. Create a Global User-Level Rule in both ~/.omp/agent/rules and ~/.omp/rules
   const globalRuleContent = `---
-globs: ["src/**/*.ts"]
 priority: 5
+globs:
+  - "**/*.ts"
+  - "**/*.tsx"
 ---
-# Global User Style
 Enforce strict TypeScript formatting.`;
 
   await fs.writeFile(path.join(agentRulesDir, "global-code-style.md"), globalRuleContent);
@@ -55,10 +57,10 @@ Enforce strict TypeScript formatting.`;
   await fs.writeFile(
     path.join(projRulesDir, "api.md"),
     `---
-globs: ["src/api/**/*.ts"]
 priority: 50
+globs:
+  - "src/api/**/*.ts"
 ---
-# API Standards
 Always validate payloads with Zod schemas.`
   );
 
@@ -66,10 +68,11 @@ Always validate payloads with Zod schemas.`
   await fs.writeFile(
     path.join(projRulesDir, "auth.md"),
     `---
-globs: ["src/auth/**/*.ts", "src/**/Auth*.tsx"]
 priority: 100
+globs:
+  - "src/auth/**/*.ts"
+  - "src/components/Auth*.tsx"
 ---
-# Auth Security
 Never log plaintext tokens or passwords.`
   );
 
@@ -77,10 +80,10 @@ Never log plaintext tokens or passwords.`
   await fs.writeFile(
     path.join(projRulesDir, "ui.md"),
     `---
-globs: ["src/components/**/*.tsx", "src/ui/**/*.tsx"]
 priority: 40
+globs:
+  - "src/components/**/*.tsx"
 ---
-# UI Guidelines
 Use Tailwind CSS atomic utility classes.`
   );
 
@@ -88,10 +91,9 @@ Use Tailwind CSS atomic utility classes.`
   await fs.writeFile(
     path.join(projRulesDir, "ttsr-dangerous-eval.md"),
     `---
-condition: "eval\\\\("
-scope: "tool:edit(*.ts)"
+condition: "eval\\("
+alwaysApply: false
 ---
-# TTSR Stream Alert
 Dangerous eval statement detected in stream!`
   );
 
@@ -102,7 +104,6 @@ Dangerous eval statement detected in stream!`
     ...process.env,
     HOME: tmpHome,
     PI_CODING_AGENT_DIR: agentDir,
-    MOCK_PROVIDER_API_KEY: "mock-key",
   };
 
   try {
@@ -113,15 +114,15 @@ Dangerous eval statement detected in stream!`
     serverInstance.clearHistory();
     const res1 = await executeOmpTurn(tmpProject, extensionPath, "Please update src/api/user.ts", env);
     if (res1.code !== 0) {
-      throw new Error(`Scenario 1 CLI execution failed:\nSTDOUT: ${res1.stdout}\nSTDERR: ${res1.stderr}`);
+      throw new Error(`Scenario 1 CLI execution failed with exit code ${res1.code}:\nSTDOUT: ${res1.stdout}\nSTDERR: ${res1.stderr}`);
     }
 
     const bodies1 = serverInstance.receivedBodies;
-    if (bodies1.length === 0) {
-      throw new Error("Scenario 1 Failed: Mock server received 0 HTTP requests from OMP CLI");
+    if (bodies1.length === 0 || !Array.isArray(bodies1[0]?.messages) || bodies1[0].messages.length === 0) {
+      throw new Error("Scenario 1 Failed: Mock server received 0 valid HTTP requests with messages from OMP CLI");
     }
 
-    const payloadText1 = JSON.stringify(bodies1[0]?.messages);
+    const payloadText1 = JSON.stringify(bodies1[0].messages);
 
     // Assert actual rule body content (not just active block tag)
     if (!payloadText1.includes("Always validate payloads with Zod schemas.")) {
@@ -139,15 +140,20 @@ Dangerous eval statement detected in stream!`
     serverInstance.clearHistory();
     const res2 = await executeOmpTurn(tmpProject, extensionPath, "Please update docs/readme.md", env);
     if (res2.code !== 0) {
-      throw new Error(`Scenario 2 CLI execution failed:\nSTDOUT: ${res2.stdout}\nSTDERR: ${res2.stderr}`);
+      throw new Error(`Scenario 2 CLI execution failed with exit code ${res2.code}:\nSTDOUT: ${res2.stdout}\nSTDERR: ${res2.stderr}`);
     }
 
     const bodies2 = serverInstance.receivedBodies;
-    if (bodies2.length === 0) {
-      throw new Error("Scenario 2 Failed: Mock server received 0 HTTP requests from OMP CLI");
+    if (bodies2.length === 0 || !Array.isArray(bodies2[0]?.messages) || bodies2[0].messages.length === 0) {
+      throw new Error("Scenario 2 Failed: Mock server received 0 valid HTTP requests with messages from OMP CLI");
     }
 
-    const payloadText2 = JSON.stringify(bodies2[0]?.messages);
+    const payloadText2 = JSON.stringify(bodies2[0].messages);
+
+    // Verify the prompt was indeed transmitted by OMP
+    if (!payloadText2.includes("docs/readme.md")) {
+      throw new Error(`Scenario 2 Failed: User prompt was missing in HTTP request payload: ${payloadText2}`);
+    }
 
     // Assert actual eviction of rule tags and body contents
     if (payloadText2.includes("<active_path_rules>")) {
@@ -177,15 +183,15 @@ Dangerous eval statement detected in stream!`
     serverInstance.clearHistory();
     const res4 = await executeOmpTurn(tmpProject, extensionPath, "Review token verification in src/auth/jwt.ts", env);
     if (res4.code !== 0) {
-      throw new Error(`Scenario 4 CLI execution failed:\nSTDOUT: ${res4.stdout}\nSTDERR: ${res4.stderr}`);
+      throw new Error(`Scenario 4 CLI execution failed with exit code ${res4.code}:\nSTDOUT: ${res4.stdout}\nSTDERR: ${res4.stderr}`);
     }
 
     const bodies4 = serverInstance.receivedBodies;
-    if (bodies4.length === 0) {
-      throw new Error("Scenario 4 Failed: Mock server received 0 HTTP requests from OMP CLI");
+    if (bodies4.length === 0 || !Array.isArray(bodies4[0]?.messages) || bodies4[0].messages.length === 0) {
+      throw new Error("Scenario 4 Failed: Mock server received 0 valid HTTP requests with messages from OMP CLI");
     }
 
-    const payloadText4 = JSON.stringify(bodies4[0]?.messages);
+    const payloadText4 = JSON.stringify(bodies4[0].messages);
     const authPos = payloadText4.indexOf("Never log plaintext tokens or passwords.");
     const globalPos = payloadText4.indexOf("Enforce strict TypeScript formatting.");
 
@@ -207,15 +213,15 @@ Dangerous eval statement detected in stream!`
     serverInstance.clearHistory();
     const res5 = await executeOmpTurn(tmpProject, extensionPath, "Edit src/components/AuthButton.tsx", env);
     if (res5.code !== 0) {
-      throw new Error(`Scenario 5 CLI execution failed:\nSTDOUT: ${res5.stdout}\nSTDERR: ${res5.stderr}`);
+      throw new Error(`Scenario 5 CLI execution failed with exit code ${res5.code}:\nSTDOUT: ${res5.stdout}\nSTDERR: ${res5.stderr}`);
     }
 
     const bodies5 = serverInstance.receivedBodies;
-    if (bodies5.length === 0) {
-      throw new Error("Scenario 5 Failed: Mock server received 0 HTTP requests from OMP CLI");
+    if (bodies5.length === 0 || !Array.isArray(bodies5[0]?.messages) || bodies5[0].messages.length === 0) {
+      throw new Error("Scenario 5 Failed: Mock server received 0 valid HTTP requests with messages from OMP CLI");
     }
 
-    const payloadText5 = JSON.stringify(bodies5[0]?.messages);
+    const payloadText5 = JSON.stringify(bodies5[0].messages);
 
     if (!payloadText5.includes("Use Tailwind CSS atomic utility classes.")) {
       throw new Error(`Scenario 5 Failed: UI rule body was missing in HTTP request payload: ${payloadText5}`);
@@ -240,68 +246,72 @@ function executeOmpTurn(
   env: NodeJS.ProcessEnv,
   timeoutMs = 25_000
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const { promise, resolve } = Promise.withResolvers<{
-    code: number | null;
-    stdout: string;
-    stderr: string;
-  }>();
+  let resolve: (res: { code: number | null; stdout: string; stderr: string }) => void;
+  const promise = new Promise<{ code: number | null; stdout: string; stderr: string }>((r) => {
+    resolve = r;
+  });
 
   let stdout = "";
   let stderr = "";
-  let settled = false;
 
   const child = spawn(
     "omp",
     [
-      "--no-session",
-      `--cwd=${cwd}`,
-      `--extension=${extensionPath}`,
-      "--model=mock-provider/gpt-5.6-luna",
       "-p",
       prompt,
+      "--no-extensions",
+      "-e",
+      extensionPath,
+      "--provider",
+      "mock-openai",
+      "--model",
+      "mock-model",
     ],
     {
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
+      cwd,
+      env: {
+        ...env,
+        CI: "true",
+        FORCE_COLOR: "0",
+        NO_COLOR: "1",
+        TERM: "dumb",
+        PI_SKIP_VERSION_CHECK: "1",
+        PI_TELEMETRY: "0",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
     }
   );
 
-  // Close child stdin immediately so non-interactive prompt executes without waiting on stdin EOF
-  child.stdin.end();
-
-  const timer = setTimeout(() => {
-    if (!settled) {
-      settled = true;
-      child.kill("SIGKILL");
-      resolve({
-        code: -1,
-        stdout,
-        stderr: `${stderr}\n[TIMEOUT: omp turn exceeded ${timeoutMs}ms]`,
-      });
-    }
-  }, timeoutMs);
-
   child.stdout.on("data", (chunk: Buffer) => {
-    stdout += chunk.toString();
+    stdout += chunk.toString("utf-8");
   });
 
   child.stderr.on("data", (chunk: Buffer) => {
-    stderr += chunk.toString();
+    stderr += chunk.toString("utf-8");
   });
 
+  let finished = false;
+  const timer = setTimeout(() => {
+    if (!finished) {
+      finished = true;
+      child.kill("SIGKILL");
+      resolve({ code: -1, stdout, stderr: stderr + "\n[Execution Timed Out]" });
+    }
+  }, timeoutMs);
+
   child.on("close", (code) => {
-    clearTimeout(timer);
-    if (!settled) {
-      settled = true;
+    if (!finished) {
+      finished = true;
+      clearTimeout(timer);
       resolve({ code, stdout, stderr });
     }
   });
 
   child.on("error", (err) => {
-    clearTimeout(timer);
-    if (!settled) {
-      settled = true;
-      resolve({ code: -1, stdout, stderr: `${stderr}\n${err.message}` });
+    if (!finished) {
+      finished = true;
+      clearTimeout(timer);
+      resolve({ code: -1, stdout, stderr: stderr + `\n[Spawn Error: ${err.message}]` });
     }
   });
 
