@@ -9,6 +9,7 @@ import {
 } from "../src/injector.js";
 import {
   extractActivePaths,
+  FILESYSTEM_CASE_INSENSITIVE,
   globToRegExp,
   matchesGlob,
   matchActiveRules,
@@ -60,6 +61,16 @@ Body content`;
     expect(body).toBe("Body content");
   });
 
+  it("preserves quoted commas inside inline array items (brace globs)", () => {
+    const raw = `---
+globs: ["src/{a,b}.ts", "x/**/*.ts"]
+---
+Body`;
+
+    const { frontmatter } = parseFrontmatter(raw);
+    expect(frontmatter.globs).toEqual(["src/{a,b}.ts", "x/**/*.ts"]);
+  });
+
   it("returns raw text when no frontmatter is present", () => {
     const raw = `# Plain markdown
 No frontmatter here`;
@@ -81,6 +92,12 @@ describe("Glob Matcher", () => {
     expect(matchesGlob("src/api/v1/user.ts", "src/**/*.ts")).toBe(true);
     expect(matchesGlob("src/index.ts", "src/**/*.ts")).toBe(true);
     expect(matchesGlob("lib/api/user.ts", "src/**/*.ts")).toBe(false);
+  });
+
+  it("matches case-insensitively on case-insensitive filesystems only", () => {
+    const expected = FILESYSTEM_CASE_INSENSITIVE;
+    expect(matchesGlob("src/API/Users.ts", "src/api/**/*.ts")).toBe(expected);
+    expect(matchesGlob("SRC/INDEX.TS", "src/*.ts")).toBe(expected);
   });
 
   it("matches multi-extension groups {ts,tsx}", () => {
@@ -143,6 +160,12 @@ describe("Scanner & Rule Classification (TTSR Coexistence)", () => {
 
     // 11. Plain Rulebook (No globs, no condition, no alwaysApply)
     expect(scanner.classifyRule({ description: "general info" })).toBe("rulebook");
+
+    // 12. TTSR trigger combined with globs is STILL a stream rule — this is
+    // the regression the real-CLI E2E TTSR-exclusion scenario relies on.
+    expect(
+      scanner.classifyRule({ condition: "eval\\(", globs: ["src/eval/**"] })
+    ).toBe("ttsr_stream");
   });
 
   it("scans temporary directory and handles mtime signature cache", async () => {
@@ -170,12 +193,47 @@ API standards: Always use zod.`
     const rules2 = await scanner.scan(tmpDir);
     expect(rules2.length).toBe(1);
 
+    // Same-size edit within the same mtime tick must still refresh content:
+    // signatures are content hashes, not mtimeMs:size.
+    const v1 = "---\nglobs: [\"src/api/**/*.ts\"]\n---\nCONTENT_V1_AAA";
+    const v2 = "---\nglobs: [\"src/api/**/*.ts\"]\n---\nCONTENT_V2_BBB";
+    if (v1.length !== v2.length) throw new Error("test fixture sizes must match");
+    await fs.writeFile(ruleFile, v1);
+    const rules3 = await scanner.scan(tmpDir);
+    expect(rules3[0].content).toContain("CONTENT_V1_AAA");
+
+    await fs.writeFile(ruleFile, v2);
+    const rules4 = await scanner.scan(tmpDir);
+    expect(rules4[0].content).toContain("CONTENT_V2_BBB");
+
     // Clean up
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 });
 
 describe("Active Path Extractor & Native AgentMessage Shapes", () => {
+  it("ignores bare name.ext tokens but keeps directory-qualified paths", () => {
+    const cwd = "/app";
+    const messages: ChatMessage[] = [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Upgrade to v1.2 and check package.json, then read src/api/user.ts",
+          },
+        ],
+      },
+    ];
+
+    const activePaths = extractActivePaths(messages, cwd);
+    expect(activePaths).toContain("src/api/user.ts");
+    // Bare tokens over-match version strings / package names and must not
+    // spuriously activate path rules.
+    expect(activePaths).not.toContain("v1.2");
+    expect(activePaths).not.toContain("package.json");
+  });
+
   it("extracts paths from structured native AgentMessage content blocks", () => {
     const cwd = "/app";
     const messages: ChatMessage[] = [

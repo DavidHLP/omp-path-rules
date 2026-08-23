@@ -1,6 +1,52 @@
 import type { RuleFrontmatter } from "./types.js";
 
 /**
+ * Splits an inline YAML array body on commas that are OUTSIDE quotes,
+ * so patterns like "src/{a,b}.ts" survive as single items.
+ */
+function splitInlineArray(inner: string): string[] {
+  const items: string[] = [];
+  let current = "";
+  let quote: string | null = null;
+
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (quote) {
+      if (ch === quote) {
+        quote = null;
+      }
+      current += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === ",") {
+      items.push(current);
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim().length > 0 || items.length > 0) {
+    items.push(current);
+  }
+  return items.map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+function unquote(s: string): string {
+  if (
+    (s.startsWith('"') && s.endsWith('"') && s.length >= 2) ||
+    (s.startsWith("'") && s.endsWith("'") && s.length >= 2)
+  ) {
+    return s.slice(1, -1);
+  }
+  return s;
+}
+
+/**
  * Minimal, zero-dependency YAML frontmatter parser for markdown rules.
  * Adheres to fail-open principle: malformed YAML returns empty metadata without throwing.
  */
@@ -73,19 +119,9 @@ export function parseFrontmatter(rawContent: string): {
 
         // Inline array: [item1, item2]
         if (rawVal.startsWith("[") && rawVal.endsWith("]")) {
-          const inner = rawVal.slice(1, -1).trim();
-          const items = inner
-            .split(",")
-            .map((s) => {
-              const str = s.trim();
-              if (
-                (str.startsWith('"') && str.endsWith('"')) ||
-                (str.startsWith("'") && str.endsWith("'"))
-              ) {
-                return str.slice(1, -1);
-              }
-              return str;
-            })
+          const inner = rawVal.slice(1, -1);
+          const items = splitInlineArray(inner)
+            .map((s) => unquote(s.trim()))
             .filter((s) => s.length > 0);
           frontmatter[currentKey] = items;
           continue;

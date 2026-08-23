@@ -2,6 +2,14 @@ import * as path from "node:path";
 import type { ChatMessage, MatchedRule, ParsedRule } from "./types.js";
 
 /**
+ * macOS (APFS/HFS+) and Windows filesystems are case-insensitive by default.
+ * On those platforms glob matching is case-insensitive too, so rules written
+ * as "src/api/**" still match files the OS reports as "src/API/User.ts".
+ */
+export const FILESYSTEM_CASE_INSENSITIVE =
+  process.platform === "darwin" || process.platform === "win32";
+
+/**
  * Converts a glob pattern into a regular expression.
  * Handles *, **, ?, and {a,b} expansions.
  */
@@ -61,7 +69,7 @@ export function globToRegExp(pattern: string): RegExp {
   }
 
   regexStr += "$";
-  return new RegExp(regexStr);
+  return new RegExp(regexStr, FILESYSTEM_CASE_INSENSITIVE ? "i" : "");
 }
 
 /**
@@ -71,13 +79,16 @@ export function matchesGlob(targetPath: string, pattern: string): boolean {
   const normPath = targetPath.replace(/\\/g, "/").replace(/^\.\//, "");
   const normPattern = pattern.replace(/\\/g, "/").replace(/^\.\//, "");
 
+  const cmpPath = FILESYSTEM_CASE_INSENSITIVE ? normPath.toLowerCase() : normPath;
+  const cmpPattern = FILESYSTEM_CASE_INSENSITIVE ? normPattern.toLowerCase() : normPattern;
+
   // Exact match fast path
-  if (normPath === normPattern) return true;
+  if (cmpPath === cmpPattern) return true;
 
   // Simple wildcard file extension fast path (*.ts)
-  if (normPattern.startsWith("*.") && !normPattern.includes("/")) {
-    const ext = normPattern.slice(1);
-    return normPath.endsWith(ext) && !normPath.slice(0, -ext.length).includes("/");
+  if (cmpPattern.startsWith("*.") && !cmpPattern.includes("/")) {
+    const ext = cmpPattern.slice(1);
+    return cmpPath.endsWith(ext) && !cmpPath.slice(0, -ext.length).includes("/");
   }
 
   // General glob regex match
@@ -275,8 +286,10 @@ function extractPathsFromText(
   cwd: string,
   outSet: Set<string>
 ): void {
-  // Regex to match potential file paths with extensions
-  const pathRegex = /(?:[\w.-]+\/)+[\w.-]+\.[a-zA-Z0-9_-]+|[\w.-]+\.[a-zA-Z0-9_-]+/g;
+  // Match potential file paths that include at least one directory segment.
+  // Bare "name.ext" tokens are excluded on purpose: they over-match version
+  // strings and package names and would spuriously activate path rules.
+  const pathRegex = /(?:[\w.-]+\/)+[\w.-]+\.[a-zA-Z0-9_-]+/g;
   const matches = text.match(pathRegex);
   if (!matches) return;
 

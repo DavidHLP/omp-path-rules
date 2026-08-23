@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { parseFrontmatter } from "./frontmatter.js";
 import type { ParsedRule, RuleKind, RuleRegistryState } from "./types.js";
 
@@ -73,8 +74,11 @@ export class RuleScanner {
         currentFiles.add(filePath);
 
         try {
-          const stat = await fs.stat(filePath);
-          const signature = `${stat.mtimeMs}:${stat.size}`;
+          // Always read the file and validate the cache against a content
+          // hash. An mtimeMs:size signature misses same-second, same-size
+          // edits on coarse-mtime filesystems; content hashing cannot.
+          const raw = await fs.readFile(filePath, "utf-8");
+          const signature = createHash("sha256").update(raw).digest("hex");
 
           const cached = this.cache.get(filePath);
           if (cached && cached.rawSignature === signature) {
@@ -82,8 +86,7 @@ export class RuleScanner {
             continue;
           }
 
-          // Read and parse
-          const raw = await fs.readFile(filePath, "utf-8");
+          // Parse
           const { frontmatter, body } = parseFrontmatter(raw);
 
           const id = path.basename(entry.name, ext);
