@@ -168,13 +168,35 @@ Dangerous eval statement detected in stream!`
     console.log("✓ Scenario 2 Passed: HTTP request payload verified to have zero path rules for docs/readme.md.");
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SCENARIO 3: TTSR Rule Isolation Verification
+    // SCENARIO 3: TTSR Rule Isolation (Dedicated CLI Turn)
     // ─────────────────────────────────────────────────────────────────────────
-    console.log("\n--- Scenario 3: TTSR rule isolation from prompt context ---");
-    if (payloadText1.includes("Dangerous eval statement detected in stream!")) {
-      throw new Error("Scenario 3 Failed: TTSR rule was leaked into prompt request payload!");
+    console.log("\n--- Scenario 3: TTSR rule isolation on dedicated turn (src/eval/runner.ts) ---");
+    serverInstance.clearHistory();
+    const res3 = await executeOmpTurn(tmpProject, extensionPath, "Evaluate script execution in src/eval/runner.ts", env);
+    if (res3.code !== 0) {
+      throw new Error(`Scenario 3 CLI execution failed with exit code ${res3.code}:\nSTDOUT: ${res3.stdout}\nSTDERR: ${res3.stderr}`);
     }
-    console.log("✓ Scenario 3 Passed: TTSR rule was verified absent from the prompt request payload.");
+
+    const bodies3 = serverInstance.receivedBodies;
+    if (bodies3.length === 0 || !Array.isArray(bodies3[0]?.messages) || bodies3[0].messages.length === 0) {
+      throw new Error("Scenario 3 Failed: Mock server received 0 valid HTTP requests with messages from OMP CLI");
+    }
+
+    const payloadText3 = JSON.stringify(bodies3[0].messages);
+
+    // Verify the prompt was transmitted by OMP
+    if (!payloadText3.includes("src/eval/runner.ts")) {
+      throw new Error(`Scenario 3 Failed: User prompt was missing in HTTP request payload: ${payloadText3}`);
+    }
+
+    // Assert TTSR stream rule content is NOT leaked into prompt context
+    if (payloadText3.includes("Dangerous eval statement detected in stream!")) {
+      throw new Error(`Scenario 3 Failed: TTSR rule body was unexpectedly leaked into prompt request payload: ${payloadText3}`);
+    }
+    if (payloadText3.includes("ttsr-dangerous-eval")) {
+      throw new Error(`Scenario 3 Failed: TTSR rule ID was unexpectedly leaked into prompt request payload: ${payloadText3}`);
+    }
+    console.log("✓ Scenario 3 Passed: Dedicated CLI turn executed (code 0) and verified TTSR rule strictly excluded from HTTP payload.");
 
     // ─────────────────────────────────────────────────────────────────────────
     // SCENARIO 4: Priority Ordering Across Overlapping Rules
