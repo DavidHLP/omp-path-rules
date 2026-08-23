@@ -1,0 +1,30 @@
+{
+  "name": "omp-path-rules",
+  "version": "0.1.0",
+  "description": "Dynamic path-based rule context injection extension for OMP (Oh My Pi)",
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "omp": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "keywords": [
+    "omp",
+    "oh-my-pi",
+    "rules",
+    "context-injection",
+    "extensions"
+  ],
+  "author": "davidhlp",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/bun": "^1.4.0",
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
+  }
+}
