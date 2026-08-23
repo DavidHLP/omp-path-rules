@@ -48,6 +48,74 @@ priority: 100
 
 *Note: Rules declaring non-empty TTSR triggers (`condition`, `astCondition`, `ttsr_trigger`, `ttsrTrigger`) or `alwaysApply: true` are recognized as native OMP TTSR/Always-Apply and skipped by this extension to prevent duplicate injection.*
 
+
+## Designing Path Rules and TTSR Rules
+
+`omp-path-rules` and OMP's native TTSR engine have different lifecycles and
+different responsibilities:
+
+| Rule type | Use for | Frontmatter | Lifecycle |
+|---|---|---|---|
+| Path rule | Tell the LLM which conventions to follow before inference | `globs` or `paths`, without a TTSR trigger | Pre-turn injection for the current active paths |
+| TTSR rule | Inspect, interrupt, or control a runtime/tool stream | `condition`, `astCondition`, `ast_condition`, `ttsr_trigger`, or `ttsrTrigger` | OMP-native stream processing |
+| Always-Apply rule | Session-wide conventions | `alwaysApply: true`, without a TTSR trigger | OMP-native base system prompt |
+
+These rule types are intentionally mutually exclusive in this extension. A
+rule with a TTSR trigger is left to OMP's native TTSR engine, and an
+`alwaysApply` rule is left to OMP core. The extension does not inject the same
+rule body a second time.
+
+### Recommended split
+
+Use two rules when you need both pre-inference guidance and runtime
+enforcement. Keep the guidance in a path rule and the runtime condition in a
+separate TTSR rule:
+
+```text
+.omp/rules/
+├── typescript-style.md   # pre-inference guidance for matching files
+└── typescript-guard.md   # native TTSR runtime enforcement
+```
+
+Path rule:
+
+```markdown
+---
+description: "TypeScript implementation conventions"
+globs: ["src/**/*.ts", "src/**/*.tsx"]
+priority: 100
+---
+
+# TypeScript conventions
+- Validate external input at the trust boundary.
+- Keep exported functions explicitly typed.
+- Add or update focused tests for behavior changes.
+```
+
+TTSR rule:
+
+```markdown
+---
+description: "TypeScript runtime guard"
+condition: "eval(...)"
+---
+
+# Runtime guard
+Reject unsafe evaluation before it reaches the tool execution stream.
+```
+
+Do not put a TTSR trigger on the path rule if the same rule must be
+pre-injected. Do not copy the same rule body into both files. The intended
+composition is:
+
+```text
+path rule -> tell the LLM what to do before generation
+TTSR rule  -> inspect or interrupt execution when its condition is met
+```
+
+Path-rule activation is transient: rules are recomputed for each turn and
+removed when the current active paths no longer match. This is separate from
+the native TTSR lifecycle.
 ---
 
 ## Slash Commands
