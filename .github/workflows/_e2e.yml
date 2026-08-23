@@ -34,9 +34,16 @@ jobs:
             const testCwd = "/tmp/omp-e2e-ci";
             await fs.mkdir(path.join(testCwd, ".omp", "rules"), { recursive: true });
 
+            // 1. Create a standard path rule (should be injected when path matches)
             await fs.writeFile(
               path.join(testCwd, ".omp", "rules", "api-standards.md"),
               "---\nglobs: [\"src/api/**/*.ts\"]\npriority: 100\n---\n# API Rules\nAlways validate with Zod."
+            );
+
+            // 2. Create a TTSR rule with regex condition + scope (must NOT be injected into prompt context)
+            await fs.writeFile(
+              path.join(testCwd, ".omp", "rules", "no-eval.md"),
+              "---\ncondition: \"eval\\\\(\"\nscope: \"tool:edit(*.ts)\"\n---\nNever use eval."
             );
 
             let contextHandler;
@@ -55,6 +62,7 @@ jobs:
               throw new Error("Context handler was not registered");
             }
 
+            // Simulate turn 1 (touching src/api/users.ts)
             const res1 = await contextHandler({
               messages: [
                 {
@@ -72,7 +80,11 @@ jobs:
             if (!injectedContent.includes("Always validate with Zod.")) {
               throw new Error("Expected api-standards rule to be injected");
             }
+            if (injectedContent.includes("Never use eval.")) {
+              throw new Error("TTSR rule was incorrectly injected into prompt context");
+            }
 
+            // Simulate turn 2 (moving away from src/api to docs/readme.md -> rule should be evicted)
             const res2 = await contextHandler({
               messages: [
                 ...res1.messages,
@@ -133,8 +145,12 @@ jobs:
 
             const loaded = result.extensions[0];
             console.log("Loaded extension label:", loaded.label);
+            console.log("Loaded extension resolvedPath:", loaded.resolvedPath);
             if (loaded.label !== "omp-path-rules") {
               throw new Error(`Expected label omp-path-rules, got ${loaded.label}`);
+            }
+            if (loaded.resolvedPath !== extensionEntry) {
+              throw new Error(`Expected resolvedPath ${extensionEntry}, got ${loaded.resolvedPath}`);
             }
 
             console.log("✓ Official OMP extension loader successfully initialized omp-path-rules without errors!");
