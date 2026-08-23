@@ -43,8 +43,8 @@ jobs:
       - name: Run Test Suite
         run: bun test
 
-  integration-e2e:
-    name: Simulated OMP Runtime E2E
+  simulated-e2e:
+    name: Simulated Context Lifecycle E2E
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -58,7 +58,7 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Run E2E Integration Scenario
+      - name: Run Context Simulation Scenario
         run: |
           bun -e '
             import * as fs from "node:fs/promises";
@@ -139,5 +139,45 @@ jobs:
               throw new Error("Single-turn transient eviction failed: rule remained in context");
             }
 
-            console.log("All E2E checks passed successfully in CI environment!");
+            console.log("All context lifecycle checks passed successfully!");
           '
+
+  real-omp-e2e:
+    name: Actual OMP CLI & Extension Loader E2E
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install official OMP package
+        run: npm install -g @oh-my-pi/pi-coding-agent@18.0.0
+
+      - name: Verify OMP CLI installation
+        run: |
+          which omp
+          omp --version
+
+      - name: Test OMP official extension loader
+        run: |
+          # Verify that OMP CLI loads our extension entrypoint without syntax or runtime initialization errors
+          omp --extension ./src/index.ts --help
+
+      - name: Test OMP plugin manifest discovery
+        run: |
+          # Link this project directory as an OMP extension package
+          mkdir -p ~/.omp/agent/extensions
+          ln -s "$(pwd)/src/index.ts" ~/.omp/agent/extensions/omp-path-rules.ts
+          omp --help
