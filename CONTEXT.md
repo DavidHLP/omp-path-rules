@@ -3,22 +3,25 @@
 ## Domain Glossary
 
 ### Rule
-A modular Markdown document in `.omp/rules/` defining behavioral, architectural, or domain guidelines for an AI coding assistant.
+A modular instructional document defining behavioral, architectural, or domain guidelines for an AI assistant.
 
-### Rule Classification
-The three mutually exclusive runtime behaviors assigned to a Rule based on its declared metadata:
-1. **Stream-Intercepted Rule (TTSR Rule)**: A rule declaring dynamic streaming conditions or tool stream scopes (`condition`, `astCondition`, `scope: tool:edit(...)`), evaluated in real-time by the OMP native streaming engine during tool execution.
-2. **Global Static Rule (Always-Apply Rule)**: A rule declaring `alwaysApply: true` without streaming conditions, loaded at session initialization into the base system prompt.
-3. **Path-Triggered Rule (Context-Injected Rule)**: A rule declaring file glob patterns without streaming conditions and without unconditional application, dynamically evaluated and injected into immediate context when relevant workspace files are touched.
+### Rule Scope
+The organizational boundary within which a Rule originates and applies (such as global workspace baselines or project-specific constraints).
+
+### Rule Activation
+The runtime transition of a Rule from available storage into the active operational context of an agent.
 
 ### Active Path
-A repository-relative or absolute file path referenced in recent operational context (such as arguments to file inspection and editing tools or explicit prompt mentions).
+A file or directory path referenced during the current turn of execution.
+
+### Path Pattern
+A criteria or glob expression specifying the workspace paths to which a Rule is relevant.
 
 ### Path Matching
-The process of testing an Active Path against a Rule's defined glob patterns to determine if the rule is relevant to current execution.
+The evaluation of whether an Active Path satisfies a Rule's declared Path Pattern.
 
-### Pre-Turn Context Injection
-The dynamic synthesis and placement of active, matching rule bodies into the LLM message pipeline immediately before model inference, with automatic eviction when focus moves to unrelated paths.
+### Context Injection
+The dynamic introduction of active Rule content into an agent's prompt context during task execution.
 
-### Cache Invalidation Signature
-The compound signature (directory snapshot, file modification timestamps, and file byte sizes) used to detect filesystem changes, additions, and deletions without background daemon overhead.
+### Rule Precedence
+The deterministic hierarchy used to rank, order, or resolve conflicts when multiple active Rules apply to the same execution turn.
