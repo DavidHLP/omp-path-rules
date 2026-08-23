@@ -89,11 +89,18 @@ export default function ompPathRules(pi: ExtensionAPI): void {
         .join("|");
       if (ruleSetKey !== lastNotifiedRuleSet) {
         if (matched.length > 0) {
+          const theme = ctx.ui?.theme;
+          const color = (name: string, text: string): string =>
+            theme?.fg(name, text) ?? text;
           const ruleLines = matched.map((item, index) => {
             const branch = index === matched.length - 1 ? "'--" : "|--";
-            return `   ${branch} ${item.rule.id}`;
+            return `   ${color("dim", branch)} ${color("success", item.rule.id)}`;
           });
-          ctx.ui?.notify?.(`\x1b[36m[path-rules]\x1b[0m Loaded rules\n${ruleLines.join("\n")}`, "info");
+          const message = [
+            `* ${color("text", "Loaded rules")} ${color("dim", `(${matched.length})`)}`,
+            ...ruleLines,
+          ].join("\n");
+          ctx.ui?.notify?.(message, "info");
         }
         lastNotifiedRuleSet = ruleSetKey;
       }

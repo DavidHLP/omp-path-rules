@@ -56,9 +56,14 @@ export interface ContextEvent {
   [key: string]: unknown;
 }
 
+export interface ExtensionTheme {
+  fg(color: string, text: string): string;
+}
+
 export interface ExtensionUIContext {
   setStatus(key: string, text: string | undefined): void;
   notify(message: string, level?: "info" | "warning" | "error"): void;
+  theme?: ExtensionTheme;
 }
 
 export interface ExtensionContext {
