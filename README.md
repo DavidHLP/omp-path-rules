@@ -9,10 +9,10 @@ Pre-injects relevant rule bodies into the LLM context *before* inference when cu
 ## Features
 
 - **Active Pre-Turn Injection**: Automatically injects matching rule markdown bodies into `messages` before the model inference runs (Cursor MDC-style experience).
-- **Clean Coexistence with Native TTSR**: Scans native `.omp/rules/*.md` and `~/.omp/agent/rules/*.md`, but cleanly separates:
-  - **TTSR Stream Rules** (`condition`, `astCondition`, `scope: "tool:..."`) -> Ignored; left exclusively to OMP's native stream engine.
-  - **Always-Apply Rules** (`alwaysApply: true`) -> Ignored; already injected into system prompt by OMP core.
-  - **Path Rules** (`globs: [...]` without condition) -> Actively matched and dynamically injected.
+- **Clean Coexistence with Native TTSR**: Scans native `.omp/rules/*.md` and `~/.omp/agent/rules/*.md`, cleanly separating:
+  - **TTSR Stream Rules** (`condition`, `astCondition`, `ttsr_trigger`, `ttsrTrigger` non-empty) -> Ignored; left exclusively to OMP's native real-time stream engine.
+  - **Always-Apply Rules** (`alwaysApply: true` without trigger conditions) -> Ignored; already injected into system prompt by OMP core.
+  - **Path Rules** (`globs`/`paths`, or scope-only rules like `scope: tool:edit(*.ts)` without trigger conditions) -> Actively matched and dynamically injected.
 - **Single-Turn Transient Scope**: Only matches paths in the *current* turn (latest user prompt + active tool executions). Exiting a file immediately evicts its rules to keep context minimal.
 - **High-Performance Invalidation**: Uses compound directory + `mtimeMs` + `size` signatures for hot-reloading with zero background watcher leaks.
 - **Token Budget Protection**: Configurable character/token budget with automatic priority-based truncation.
@@ -42,10 +42,11 @@ priority: 100
 | Field | Type | Description |
 |---|---|---|
 | `globs` / `paths` | `string[]` \| `string` | Glob patterns to match against active working files. |
+| `scope` (fallback) | `string` \| `string[]` | If `globs` is omitted and no TTSR condition is present, extracts globs from `tool:edit(<glob>)` tokens. |
 | `description` | `string` | Human-readable summary. |
 | `priority` | `number` | Sorting weight when multiple rules match (default `100`, higher runs first). |
 
-*Note: If `condition`, `astCondition`, `scope: "tool:..."`, or `alwaysApply: true` are present, the rule is recognized as native TTSR/Always-Apply and skipped by this extension.*
+*Note: Rules declaring non-empty TTSR triggers (`condition`, `astCondition`, `ttsr_trigger`, `ttsrTrigger`) or `alwaysApply: true` are recognized as native OMP TTSR/Always-Apply and skipped by this extension to prevent duplicate injection.*
 
 ---
 
