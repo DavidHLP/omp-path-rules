@@ -89,12 +89,8 @@ export default function ompPathRules(pi: ExtensionAPI): void {
         .join("|");
       if (ruleSetKey !== lastNotifiedRuleSet) {
         if (matched.length > 0) {
-          const details = matched
-            .map((item) => `${item.rule.id} [${item.matchedPaths.join(", ")}]`)
-            .join("; ");
-          ctx.ui?.notify?.(`[path-rules] Loaded ${matched.length} rule(s): ${details}`, "info");
-        } else {
-          ctx.ui?.notify?.("[path-rules] No matching rules; cleared active path rules.", "info");
+          const details = matched.map((item) => item.rule.id).join(", ");
+          ctx.ui?.notify?.(`[path-rules] Loaded rules: ${details}`, "info");
         }
         lastNotifiedRuleSet = ruleSetKey;
       }

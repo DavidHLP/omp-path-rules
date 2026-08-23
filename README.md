@@ -122,7 +122,7 @@ currently active rules after each context refresh. At session start it first
 shows the number of discovered path rules; the context status then replaces
 that value with the number of rules matched for the current turn. The
 extension also sends a notification when the active rule set changes,
-including the matched rule IDs and paths. Repeated context refreshes with the
+including the matched rule IDs. Repeated context refreshes with the
 same active rules do not create duplicate notifications.
 ---
 
