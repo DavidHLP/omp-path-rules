@@ -2,13 +2,18 @@ import * as http from "node:http";
 
 export interface MockServerInstance {
   server: http.Server;
+  /**
+   * Actual bound port. Pass port=0 to let the OS pick a free one, which
+   * removes fixed-port collisions as a flake source.
+   */
+  actualPort: number;
   receivedBodies: Array<Record<string, unknown>>;
   getLastReceivedMessages(): Array<Record<string, unknown>>;
   clearHistory(): void;
   close(): Promise<void>;
 }
 
-export function startMockOpenAiServer(port = 19988): Promise<MockServerInstance> {
+export function startMockOpenAiServer(port = 0): Promise<MockServerInstance> {
   const { promise, resolve } = Promise.withResolvers<MockServerInstance>();
   const receivedBodies: Array<Record<string, unknown>> = [];
 
@@ -132,8 +137,11 @@ export function startMockOpenAiServer(port = 19988): Promise<MockServerInstance>
   });
 
   server.listen(port, "127.0.0.1", () => {
+    const addr = server.address();
+    const actualPort = typeof addr === "object" && addr !== null ? addr.port : port;
     resolve({
       server,
+      actualPort,
       receivedBodies,
       getLastReceivedMessages() {
         if (receivedBodies.length === 0) return [];

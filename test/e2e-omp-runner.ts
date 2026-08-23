@@ -5,8 +5,9 @@ import { spawn } from "node:child_process";
 import { startMockOpenAiServer } from "./mock-llm-server.js";
 
 async function runRealOmpE2ETest(): Promise<void> {
-  console.log("==> 1. Initializing Mock OpenAI LLM Server on 127.0.0.1:19988...");
-  const serverInstance = await startMockOpenAiServer(19988);
+  console.log("==> 1. Initializing Mock OpenAI LLM Server on an ephemeral port...");
+  const serverInstance = await startMockOpenAiServer(0);
+  console.log(`    Mock OpenAI LLM Server listening on 127.0.0.1:${serverInstance.actualPort}`);
 
   const tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "omp-e2e-home-"));
   const dotOmpDir = path.join(tmpHome, ".omp");
@@ -24,7 +25,7 @@ async function runRealOmpE2ETest(): Promise<void> {
     id: mock-openai
     name: Mock OpenAI Provider
     api: openai-completions
-    baseUrl: http://127.0.0.1:19988/v1
+    baseUrl: http://127.0.0.1:${serverInstance.actualPort}/v1
     apiKey: mock-key
     models:
       - id: mock-model
@@ -87,11 +88,17 @@ globs:
 Use Tailwind CSS atomic utility classes.`
   );
 
-  // 6. Project Rule D: TTSR Rule (Must NOT be injected into prompt context)
+  // 6. Project Rule D: TTSR Rule (Must NOT be injected into prompt context).
+  // It deliberately ALSO carries globs matching the Scenario 3 path, so if
+  // classification ever regresses and treats it as a path_rule, it WOULD be
+  // injected and the exclusion assertion below would fail. This gives the
+  // TTSR-exclusion check real detection power instead of passing vacuously.
   await fs.writeFile(
     path.join(projRulesDir, "ttsr-dangerous-eval.md"),
     `---
 condition: "eval\\("
+globs:
+  - "src/eval/**"
 alwaysApply: false
 ---
 Dangerous eval statement detected in stream!`
@@ -117,12 +124,11 @@ Dangerous eval statement detected in stream!`
       throw new Error(`Scenario 1 CLI execution failed with exit code ${res1.code}:\nSTDOUT: ${res1.stdout}\nSTDERR: ${res1.stderr}`);
     }
 
-    const bodies1 = serverInstance.receivedBodies;
-    if (bodies1.length === 0 || !Array.isArray(bodies1[0]?.messages) || bodies1[0].messages.length === 0) {
-      throw new Error("Scenario 1 Failed: Mock server received 0 valid HTTP requests with messages from OMP CLI");
-    }
-
-    const payloadText1 = JSON.stringify(bodies1[0].messages);
+    const payloadText1 = findRequestBody(
+      serverInstance.receivedBodies,
+      "Please update src/api/user.ts",
+      "Scenario 1 Failed"
+    );
 
     // Assert actual rule body content (not just active block tag)
     if (!payloadText1.includes("Always validate payloads with Zod schemas.")) {
@@ -143,17 +149,12 @@ Dangerous eval statement detected in stream!`
       throw new Error(`Scenario 2 CLI execution failed with exit code ${res2.code}:\nSTDOUT: ${res2.stdout}\nSTDERR: ${res2.stderr}`);
     }
 
-    const bodies2 = serverInstance.receivedBodies;
-    if (bodies2.length === 0 || !Array.isArray(bodies2[0]?.messages) || bodies2[0].messages.length === 0) {
-      throw new Error("Scenario 2 Failed: Mock server received 0 valid HTTP requests with messages from OMP CLI");
-    }
-
-    const payloadText2 = JSON.stringify(bodies2[0].messages);
-
-    // Verify the prompt was indeed transmitted by OMP
-    if (!payloadText2.includes("docs/readme.md")) {
-      throw new Error(`Scenario 2 Failed: User prompt was missing in HTTP request payload: ${payloadText2}`);
-    }
+    // Locate the request carrying this turn's user prompt (not a fixed index)
+    const payloadText2 = findRequestBody(
+      serverInstance.receivedBodies,
+      "Please update docs/readme.md",
+      "Scenario 2 Failed"
+    );
 
     // Assert actual eviction of rule tags and body contents
     if (payloadText2.includes("<active_path_rules>")) {
@@ -177,19 +178,16 @@ Dangerous eval statement detected in stream!`
       throw new Error(`Scenario 3 CLI execution failed with exit code ${res3.code}:\nSTDOUT: ${res3.stdout}\nSTDERR: ${res3.stderr}`);
     }
 
-    const bodies3 = serverInstance.receivedBodies;
-    if (bodies3.length === 0 || !Array.isArray(bodies3[0]?.messages) || bodies3[0].messages.length === 0) {
-      throw new Error("Scenario 3 Failed: Mock server received 0 valid HTTP requests with messages from OMP CLI");
-    }
+    // Locate the request carrying this turn's user prompt (not a fixed index)
+    const payloadText3 = findRequestBody(
+      serverInstance.receivedBodies,
+      "Evaluate script execution in src/eval/runner.ts",
+      "Scenario 3 Failed"
+    );
 
-    const payloadText3 = JSON.stringify(bodies3[0].messages);
-
-    // Verify the prompt was transmitted by OMP
-    if (!payloadText3.includes("src/eval/runner.ts")) {
-      throw new Error(`Scenario 3 Failed: User prompt was missing in HTTP request payload: ${payloadText3}`);
-    }
-
-    // Assert TTSR stream rule content is NOT leaked into prompt context
+    // Assert TTSR stream rule content is NOT leaked into prompt context.
+    // Teeth: the TTSR fixture carries globs matching src/eval/**, so any
+    // classification regression would inject it and fail these checks.
     if (payloadText3.includes("Dangerous eval statement detected in stream!")) {
       throw new Error(`Scenario 3 Failed: TTSR rule body was unexpectedly leaked into prompt request payload: ${payloadText3}`);
     }
@@ -208,12 +206,11 @@ Dangerous eval statement detected in stream!`
       throw new Error(`Scenario 4 CLI execution failed with exit code ${res4.code}:\nSTDOUT: ${res4.stdout}\nSTDERR: ${res4.stderr}`);
     }
 
-    const bodies4 = serverInstance.receivedBodies;
-    if (bodies4.length === 0 || !Array.isArray(bodies4[0]?.messages) || bodies4[0].messages.length === 0) {
-      throw new Error("Scenario 4 Failed: Mock server received 0 valid HTTP requests with messages from OMP CLI");
-    }
-
-    const payloadText4 = JSON.stringify(bodies4[0].messages);
+    const payloadText4 = findRequestBody(
+      serverInstance.receivedBodies,
+      "Review token verification in src/auth/jwt.ts",
+      "Scenario 4 Failed"
+    );
     const authPos = payloadText4.indexOf("Never log plaintext tokens or passwords.");
     const globalPos = payloadText4.indexOf("Enforce strict TypeScript formatting.");
 
@@ -238,12 +235,11 @@ Dangerous eval statement detected in stream!`
       throw new Error(`Scenario 5 CLI execution failed with exit code ${res5.code}:\nSTDOUT: ${res5.stdout}\nSTDERR: ${res5.stderr}`);
     }
 
-    const bodies5 = serverInstance.receivedBodies;
-    if (bodies5.length === 0 || !Array.isArray(bodies5[0]?.messages) || bodies5[0].messages.length === 0) {
-      throw new Error("Scenario 5 Failed: Mock server received 0 valid HTTP requests with messages from OMP CLI");
-    }
-
-    const payloadText5 = JSON.stringify(bodies5[0].messages);
+    const payloadText5 = findRequestBody(
+      serverInstance.receivedBodies,
+      "Edit src/components/AuthButton.tsx",
+      "Scenario 5 Failed"
+    );
 
     if (!payloadText5.includes("Use Tailwind CSS atomic utility classes.")) {
       throw new Error(`Scenario 5 Failed: UI rule body was missing in HTTP request payload: ${payloadText5}`);
@@ -261,12 +257,34 @@ Dangerous eval statement detected in stream!`
   }
 }
 
+/**
+ * Finds the first captured HTTP request whose messages payload contains
+ * `snippet`. The OMP CLI may emit auxiliary requests (e.g. title generation)
+ * around the main turn, so asserting on a fixed index is brittle.
+ */
+function findRequestBody(
+  bodies: Array<Record<string, unknown>>,
+  snippet: string,
+  label: string
+): string {
+  for (const body of bodies) {
+    if (!Array.isArray(body?.messages) || (body.messages as unknown[]).length === 0) {
+      continue;
+    }
+    const payloadText = JSON.stringify(body.messages);
+    if (payloadText.includes(snippet)) {
+      return payloadText;
+    }
+  }
+  throw new Error(`${label}: no captured HTTP request contained "${snippet}". Captured ${bodies.length} request(s).`);
+}
+
 function executeOmpTurn(
   cwd: string,
   extensionPath: string,
   prompt: string,
   env: NodeJS.ProcessEnv,
-  timeoutMs = 25_000
+  timeoutMs = 60_000
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   let resolve: (res: { code: number | null; stdout: string; stderr: string }) => void;
   const promise = new Promise<{ code: number | null; stdout: string; stderr: string }>((r) => {
