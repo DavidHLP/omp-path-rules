@@ -8,6 +8,13 @@ export class RuleScanner {
   private cache: Map<string, ParsedRule> = new Map();
 
   /**
+   * Clears the signature cache to force full re-scan.
+   */
+  clearCache(): void {
+    this.cache.clear();
+  }
+
+  /**
    * Discovers and refreshes rules from project and global directories using signature cache invalidation.
    */
   async scan(
@@ -18,15 +25,21 @@ export class RuleScanner {
     const agentDir =
       process.env.PI_CODING_AGENT_DIR ||
       path.join(os.homedir(), ".omp", "agent");
-    const globalDir = path.join(agentDir, "rules");
 
-    // Scan global first, then project (so project rules with same ID win)
-    const globalFiles = await this.scanDirectory(globalDir, "global", logger);
+    const homeRulesDir = path.join(os.homedir(), ".omp", "rules");
+    const agentRulesDir = path.join(agentDir, "rules");
+
+    // Scan global user directories first, then project (so project rules with same ID win)
+    const homeGlobalFiles = await this.scanDirectory(homeRulesDir, "global", logger);
+    const agentGlobalFiles = await this.scanDirectory(agentRulesDir, "global", logger);
     const projectFiles = await this.scanDirectory(projectDir, "project", logger);
 
     // Merge: index by rule ID
     const mergedById = new Map<string, ParsedRule>();
-    for (const rule of globalFiles) {
+    for (const rule of homeGlobalFiles) {
+      mergedById.set(rule.id, rule);
+    }
+    for (const rule of agentGlobalFiles) {
       mergedById.set(rule.id, rule);
     }
     for (const rule of projectFiles) {
@@ -54,16 +67,16 @@ export class RuleScanner {
       for (const entry of entries) {
         if (!entry.isFile()) continue;
         const ext = path.extname(entry.name).toLowerCase();
-        if (ext !== ".md" && ext !== ".mdc") continue;
+        if (ext !== ".md" && ext !== ".markdown") continue;
 
         const filePath = path.join(dirPath, entry.name);
         currentFiles.add(filePath);
 
         try {
           const stat = await fs.stat(filePath);
-          const signature = `${entry.name}:${stat.mtimeMs}:${stat.size}`;
-          const cached = this.cache.get(filePath);
+          const signature = `${stat.mtimeMs}:${stat.size}`;
 
+          const cached = this.cache.get(filePath);
           if (cached && cached.rawSignature === signature) {
             results.push(cached);
             continue;
@@ -134,81 +147,66 @@ export class RuleScanner {
       return "always_apply";
     }
 
-    // 3. Path Rule (has globs, paths, or scope-extracted globs)
-    const globs = this.normalizeGlobs(fm);
-    if (globs.length > 0) {
+    // 3. Path Rule (Explicit globs or derived from scope without condition)
+    if (
+      (Array.isArray(fm.globs) && fm.globs.length > 0) ||
+      (typeof fm.globs === "string" && fm.globs.trim().length > 0) ||
+      fm.scope !== undefined
+    ) {
       return "path_rule";
     }
 
-    // 4. Default Rulebook
+    // 4. Default plain rulebook / documentation
     return "rulebook";
   }
 
   /**
-   * Checks if a rule declares a non-empty TTSR trigger condition.
+   * Checks if frontmatter defines an active TTSR stream trigger condition.
    */
   private hasTtsrTrigger(fm: Record<string, unknown>): boolean {
-    const trigger =
-      fm.condition ??
-      fm.astCondition ??
-      fm.ast_condition ??
-      fm.ttsr_trigger ??
-      fm.ttsrTrigger;
+    const hasCondition =
+      (typeof fm.condition === "string" && fm.condition.trim().length > 0) ||
+      (Array.isArray(fm.condition) && fm.condition.length > 0);
 
-    if (!trigger) return false;
+    const hasAstCondition =
+      (typeof fm.astCondition === "string" && fm.astCondition.trim().length > 0) ||
+      (Array.isArray(fm.astCondition) && fm.astCondition.length > 0) ||
+      (typeof fm.ast_condition === "string" && fm.ast_condition.trim().length > 0) ||
+      (Array.isArray(fm.ast_condition) && fm.ast_condition.length > 0);
 
-    if (typeof trigger === "string") {
-      return trigger.trim().length > 0;
-    }
-    if (Array.isArray(trigger)) {
-      return trigger.some(
-        (item) => typeof item === "string" && item.trim().length > 0
-      );
-    }
-    return false;
+    const hasTtsrTriggerField =
+      (typeof fm.ttsr_trigger === "string" && fm.ttsr_trigger.trim().length > 0) ||
+      (typeof fm.ttsrTrigger === "string" && fm.ttsrTrigger.trim().length > 0);
+
+    return hasCondition || hasAstCondition || hasTtsrTriggerField;
   }
 
   /**
-   * Normalizes globs field from string, array, comma-separated string, or scope tokens.
+   * Extracts and normalizes glob patterns from frontmatter `globs` or tool `scope`.
    */
   private normalizeGlobs(fm: Record<string, unknown>): string[] {
-    const input = fm.globs ?? fm.paths;
-    if (Array.isArray(input)) {
-      return input.map(String).filter((s) => s.trim().length > 0);
-    }
-    if (typeof input === "string") {
-      return input
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
+    const globs: string[] = [];
+
+    if (Array.isArray(fm.globs)) {
+      for (const g of fm.globs) {
+        if (typeof g === "string" && g.trim()) globs.push(g.trim());
+      }
+    } else if (typeof fm.globs === "string" && fm.globs.trim()) {
+      globs.push(fm.globs.trim());
     }
 
-    // Fallback: extract globs from scope tokens like tool:edit(*.ts) if globs/paths absent
-    if (typeof fm.scope === "string") {
-      const matches = Array.from(
-        fm.scope.matchAll(/tool:\w+\(([^)]+)\)/g)
-      ).map((m) => m[1].trim());
-      if (matches.length > 0) return matches;
-    } else if (Array.isArray(fm.scope)) {
-      const extracted: string[] = [];
-      for (const item of fm.scope) {
-        if (typeof item === "string") {
-          const matches = Array.from(
-            item.matchAll(/tool:\w+\(([^)]+)\)/g)
-          ).map((m) => m[1].trim());
-          extracted.push(...matches);
+    // Also support extracting path globs from scope like tool:edit(*.ts) or tool:write(src/**/*.tsx)
+    if (fm.scope) {
+      const scopes = Array.isArray(fm.scope) ? fm.scope : [fm.scope];
+      for (const s of scopes) {
+        if (typeof s !== "string") continue;
+        const match = s.match(/tool:[a-zA-Z0-9_-]+\(([^)]+)\)/);
+        if (match && match[1]) {
+          globs.push(match[1].trim());
         }
       }
-      if (extracted.length > 0) return extracted;
     }
 
-    return [];
-  }
-
-  /**
-   * Clear cache for testing or manual reload
-   */
-  clearCache(): void {
-    this.cache.clear();
+    return globs;
   }
 }

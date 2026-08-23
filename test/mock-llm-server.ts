@@ -3,6 +3,8 @@ import * as http from "node:http";
 export interface MockServerInstance {
   server: http.Server;
   receivedBodies: Array<Record<string, unknown>>;
+  getLastReceivedMessages(): Array<Record<string, unknown>>;
+  clearHistory(): void;
   close(): Promise<void>;
 }
 
@@ -22,8 +24,8 @@ export function startMockOpenAiServer(port = 19988): Promise<MockServerInstance>
 
       try {
         parsedBody = JSON.parse(rawData);
+        isStreaming = Boolean(parsedBody.stream);
         receivedBodies.push(parsedBody);
-        if (parsedBody.stream) isStreaming = true;
       } catch {}
 
       const messages = Array.isArray(parsedBody.messages)
@@ -32,23 +34,10 @@ export function startMockOpenAiServer(port = 19988): Promise<MockServerInstance>
 
       const fullPromptText = JSON.stringify(messages);
       const hasActiveRulesBlock = fullPromptText.includes("<active_path_rules>");
-      const hasInjectedApiRule = fullPromptText.includes("Always validate with Zod.");
-      const touchesApiUser = fullPromptText.includes("src/api/user.ts");
 
-      let responseContent = "";
-      if (touchesApiUser) {
-        if (hasActiveRulesBlock && hasInjectedApiRule) {
-          responseContent = "OMP_EXTENSION_VERIFIED_SUCCESSFULLY:RULE_INJECTED";
-        } else {
-          responseContent = `ERROR_RULE_NOT_INJECTED: hasBlock=${hasActiveRulesBlock}, hasRule=${hasInjectedApiRule}, prompt=${fullPromptText.slice(0, 300)}`;
-        }
-      } else {
-        if (!hasActiveRulesBlock && !hasInjectedApiRule) {
-          responseContent = "OMP_EXTENSION_VERIFIED_SUCCESSFULLY:RULE_EVICTED";
-        } else {
-          responseContent = `ERROR_RULE_NOT_EVICTED: hasBlock=${hasActiveRulesBlock}`;
-        }
-      }
+      const responseContent = hasActiveRulesBlock
+        ? `OMP_EXTENSION_VERIFIED_SUCCESSFULLY:RULE_INJECTED: ${messages.length} messages received`
+        : `OMP_EXTENSION_VERIFIED_SUCCESSFULLY:RULE_EVICTED: ${messages.length} messages received`;
 
       if (isStreaming) {
         res.writeHead(200, {
@@ -57,46 +46,70 @@ export function startMockOpenAiServer(port = 19988): Promise<MockServerInstance>
           Connection: "keep-alive",
         });
 
-        const chunk1 = {
-          id: "chatcmpl-stream-1",
-          object: "chat.completion.chunk",
-          created: Math.floor(Date.now() / 1000),
-          model: "mock-model",
-          choices: [
-            {
-              index: 0,
-              delta: { role: "assistant", content: responseContent },
-              finish_reason: null,
-            },
-          ],
-        };
+        const id = `chatcmpl-${Date.now()}`;
+        const created = Math.floor(Date.now() / 1000);
 
-        const chunk2 = {
-          id: "chatcmpl-stream-2",
-          object: "chat.completion.chunk",
-          created: Math.floor(Date.now() / 1000),
-          model: "mock-model",
-          choices: [
-            {
-              index: 0,
-              delta: {},
-              finish_reason: "stop",
-            },
-          ],
-        };
+        // Chunk 1: Role delta
+        res.write(
+          `data: ${JSON.stringify({
+            id,
+            object: "chat.completion.chunk",
+            created,
+            model: "gpt-5.6-luna",
+            choices: [
+              {
+                index: 0,
+                delta: { role: "assistant" },
+                finish_reason: null,
+              },
+            ],
+          })}\n\n`
+        );
 
-        res.write(`data: ${JSON.stringify(chunk1)}\n\n`);
-        res.write(`data: ${JSON.stringify(chunk2)}\n\n`);
+        // Chunk 2: Content delta
+        res.write(
+          `data: ${JSON.stringify({
+            id,
+            object: "chat.completion.chunk",
+            created,
+            model: "gpt-5.6-luna",
+            choices: [
+              {
+                index: 0,
+                delta: { content: responseContent },
+                finish_reason: null,
+              },
+            ],
+          })}\n\n`
+        );
+
+        // Chunk 3: Stop
+        res.write(
+          `data: ${JSON.stringify({
+            id,
+            object: "chat.completion.chunk",
+            created,
+            model: "gpt-5.6-luna",
+            choices: [
+              {
+                index: 0,
+                delta: {},
+                finish_reason: "stop",
+              },
+            ],
+          })}\n\n`
+        );
+
         res.write("data: [DONE]\n\n");
         res.end();
       } else {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({
-            id: "chatcmpl-mock-test",
+            id: `chatcmpl-${Date.now()}`,
             object: "chat.completion",
             created: Math.floor(Date.now() / 1000),
-            model: "mock-model",
+            model: "gpt-5.6-luna",
             choices: [
               {
                 index: 0,
@@ -108,9 +121,9 @@ export function startMockOpenAiServer(port = 19988): Promise<MockServerInstance>
               },
             ],
             usage: {
-              prompt_tokens: 20,
-              completion_tokens: 10,
-              total_tokens: 30,
+              prompt_tokens: 100,
+              completion_tokens: 20,
+              total_tokens: 120,
             },
           })
         );
@@ -122,12 +135,18 @@ export function startMockOpenAiServer(port = 19988): Promise<MockServerInstance>
     resolve({
       server,
       receivedBodies,
-      close: () => {
-        const { promise: closePromise, resolve: closeResolve } =
-          Promise.withResolvers<void>();
-        server.close(() => closeResolve());
-        return closePromise;
+      getLastReceivedMessages() {
+        if (receivedBodies.length === 0) return [];
+        const last = receivedBodies[receivedBodies.length - 1];
+        return (last?.messages as Array<Record<string, unknown>>) || [];
       },
+      clearHistory() {
+        receivedBodies.length = 0;
+      },
+      close: () =>
+        new Promise<void>((resClose) => {
+          server.close(() => resClose());
+        }),
     });
   });
 
