@@ -110,7 +110,7 @@ jobs:
             });
 
             console.log("Turn 1 Injected Messages count:", res1.messages.length);
-            const injectedContent = res1.messages[0].content;
+            const injectedContent = JSON.stringify(res1.messages[0].content);
             if (!injectedContent.includes("Always validate with Zod.")) {
               throw new Error("Expected api-standards rule to be injected");
             }
@@ -122,7 +122,7 @@ jobs:
             const res2 = await contextHandler({
               messages: [
                 ...res1.messages,
-                { role: "assistant", content: "Done editing users." },
+                { role: "assistant", content: [{ type: "text", text: "Done editing users." }] },
                 {
                   role: "user",
                   content: [{ type: "text", text: "Now look at docs/readme.md" }]
@@ -134,7 +134,7 @@ jobs:
             });
 
             console.log("Turn 2 Messages count:", res2.messages.length);
-            const hasRuleInTurn2 = res2.messages.some(m => typeof m.content === "string" && m.content.includes("Always validate with Zod."));
+            const hasRuleInTurn2 = res2.messages.some(m => JSON.stringify(m.content).includes("Always validate with Zod."));
             if (hasRuleInTurn2) {
               throw new Error("Single-turn transient eviction failed: rule remained in context");
             }
@@ -190,3 +190,34 @@ jobs:
 
             console.log("✓ Official OMP extension loader successfully initialized omp-path-rules without errors!");
           '
+
+  real-omp-cli-runtime-e2e:
+    name: Real OMP CLI Context Injection E2E
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install official OMP CLI binary
+        run: npm install -g @oh-my-pi/pi-coding-agent@18.0.0
+
+      - name: Verify OMP CLI version
+        run: |
+          which omp
+          omp --version
+
+      - name: Execute Real OMP CLI E2E Context Injection Test
+        run: bun run test/e2e-omp-runner.ts

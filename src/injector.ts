@@ -55,26 +55,45 @@ export function buildRulesPromptBlock(
 
 /**
  * Injects or updates the <active_path_rules> block in the messages pipeline.
+ * Formatted as an OMP-native "developer" role message with structured text content block.
  * Strips previous dynamic rules to ensure idempotency across turns.
  */
 export function injectRulesIntoMessages(
   messages: ChatMessage[],
   rulesBlock: string | null
 ): ChatMessage[] {
-  // First, remove any previous synthetic active_path_rules message or tag
   const filteredMessages: ChatMessage[] = [];
 
   for (const msg of messages) {
-    if (typeof msg.content === "string") {
-      if (
-        msg.role === "system" &&
-        msg.content.trim().startsWith("<active_path_rules>") &&
-        msg.content.trim().endsWith("</active_path_rules>")
-      ) {
-        // Drop previous synthetic system message
-        continue;
+    if (!msg || typeof msg !== "object") {
+      filteredMessages.push(msg);
+      continue;
+    }
+
+    let isSyntheticRulesMessage = false;
+    if (msg.role === "developer" || msg.role === "system") {
+      if (typeof msg.content === "string") {
+        isSyntheticRulesMessage = msg.content.includes("<active_path_rules>");
+      } else if (Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (
+            block &&
+            typeof block === "object" &&
+            typeof (block as Record<string, unknown>).text === "string" &&
+            ((block as Record<string, unknown>).text as string).includes("<active_path_rules>")
+          ) {
+            isSyntheticRulesMessage = true;
+            break;
+          }
+        }
       }
     }
+
+    if (isSyntheticRulesMessage) {
+      // Drop previous synthetic message
+      continue;
+    }
+
     filteredMessages.push(msg);
   }
 
@@ -82,11 +101,11 @@ export function injectRulesIntoMessages(
     return filteredMessages;
   }
 
-  // Prepend fresh synthetic system message
-  const syntheticSystemMsg: ChatMessage = {
-    role: "system",
-    content: rulesBlock,
+  // Prepend fresh synthetic developer message (OMP native AgentMessage developer role)
+  const syntheticMsg: ChatMessage = {
+    role: "developer",
+    content: [{ type: "text", text: rulesBlock }],
   };
 
-  return [syntheticSystemMsg, ...filteredMessages];
+  return [syntheticMsg, ...filteredMessages];
 }

@@ -339,13 +339,19 @@ describe("Injector & Prompt Budget", () => {
     const block1 = "<active_path_rules>\nRule 1\n</active_path_rules>";
     const res1 = injectRulesIntoMessages(initialMessages, block1);
     expect(res1.length).toBe(3);
-    expect(res1[0].content).toBe(block1);
+    expect(res1[0].role).toBe("developer");
+    
+    const contentBlocks1 = res1[0].content as Array<{ text: string }>;
+    expect(contentBlocks1[0].text).toBe(block1);
 
     // Re-injecting with a new block should replace block1 rather than stack
     const block2 = "<active_path_rules>\nRule 2\n</active_path_rules>";
     const res2 = injectRulesIntoMessages(res1, block2);
     expect(res2.length).toBe(3);
-    expect(res2[0].content).toBe(block2);
+    expect(res2[0].role).toBe("developer");
+    
+    const contentBlocks2 = res2[0].content as Array<{ text: string }>;
+    expect(contentBlocks2[0].text).toBe(block2);
   });
 });
 
@@ -419,7 +425,7 @@ Use Tailwind for UI.`
       const result = await contextHandler({ messages }, ctx);
       expect(result).toBeDefined();
       expect(result?.messages?.length).toBe(3);
-      expect(String(result?.messages?.[0]?.content)).toContain("Use Tailwind for UI.");
+      expect(JSON.stringify(result?.messages?.[0]?.content)).toContain("Use Tailwind for UI.");
     }
 
     await fs.rm(tmpDir, { recursive: true, force: true });
