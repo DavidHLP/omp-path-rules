@@ -92,7 +92,7 @@ export function matchesGlob(targetPath: string, pattern: string): boolean {
 /**
  * Extracts active file paths strictly from the current turn.
  * Scope: The latest user prompt + any tool executions initiated within this turn.
- * Older turns are excluded to guarantee single-turn transient scope and instant eviction.
+ * Robustly inspects both string content and structured AgentMessage content blocks (toolCall, toolResult, text).
  */
 export function extractActivePaths(
   messages: ChatMessage[],
@@ -115,29 +115,117 @@ export function extractActivePaths(
     lastUserIdx !== -1 ? messages.slice(lastUserIdx) : [messages[messages.length - 1]];
 
   for (const msg of activeTurnMessages) {
-    if (typeof msg === "object" && msg !== null) {
-      // 1. Tool Call inputs (e.g. read, edit, write, etc.)
-      const toolInput = (msg as Record<string, unknown>).input || msg;
-      if (typeof toolInput === "object" && toolInput !== null) {
-        const inp = toolInput as Record<string, unknown>;
-        if (typeof inp.path === "string") addNormalizedPath(inp.path, cwd, detectedPaths);
-        if (typeof inp.filePath === "string") addNormalizedPath(inp.filePath, cwd, detectedPaths);
-        if (typeof inp.file === "string") addNormalizedPath(inp.file, cwd, detectedPaths);
+    if (!msg || typeof msg !== "object") continue;
 
-        // Bash command scanning in active tool call
-        if (typeof inp.command === "string") {
-          extractPathsFromText(inp.command, cwd, detectedPaths);
+    // 1. Process message content (string or AgentMessage content blocks)
+    inspectContent(msg.content, cwd, detectedPaths);
+
+    // 2. Process top-level message tool call structures (if present)
+    const directToolInput =
+      (msg as Record<string, unknown>).input ||
+      (msg as Record<string, unknown>).arguments;
+    if (directToolInput && typeof directToolInput === "object") {
+      inspectToolArguments(directToolInput as Record<string, unknown>, cwd, detectedPaths);
+    }
+    const toolCalls = (msg as Record<string, unknown>).tool_calls;
+    if (Array.isArray(toolCalls)) {
+      for (const tc of toolCalls) {
+        if (tc && typeof tc === "object") {
+          const fn = (tc as Record<string, unknown>).function;
+          if (fn && typeof fn === "object") {
+            const rawArgs = (fn as Record<string, unknown>).arguments;
+            if (typeof rawArgs === "string") {
+              try {
+                inspectToolArguments(JSON.parse(rawArgs), cwd, detectedPaths);
+              } catch {
+                extractPathsFromText(rawArgs, cwd, detectedPaths);
+              }
+            } else if (rawArgs && typeof rawArgs === "object") {
+              inspectToolArguments(rawArgs as Record<string, unknown>, cwd, detectedPaths);
+            }
+          }
         }
-      }
-
-      // 2. Message content text (user prompt or tool result)
-      if (typeof msg.content === "string") {
-        extractPathsFromText(msg.content, cwd, detectedPaths);
       }
     }
   }
 
   return Array.from(detectedPaths);
+}
+
+function inspectContent(
+  content: unknown,
+  cwd: string,
+  outSet: Set<string>
+): void {
+  if (!content) return;
+
+  if (typeof content === "string") {
+    extractPathsFromText(content, cwd, outSet);
+    return;
+  }
+
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (!block) continue;
+      if (typeof block === "string") {
+        extractPathsFromText(block, cwd, outSet);
+        continue;
+      }
+      if (typeof block === "object") {
+        const b = block as Record<string, unknown>;
+
+        // Text & Thinking blocks
+        if (typeof b.text === "string") {
+          extractPathsFromText(b.text, cwd, outSet);
+        }
+
+        // ToolCall blocks (type: "toolCall", "tool_call", "tool_use", "custom_tool_call")
+        const toolArgs = b.arguments ?? b.args ?? b.input ?? b.parameters;
+        if (toolArgs && typeof toolArgs === "object") {
+          inspectToolArguments(toolArgs as Record<string, unknown>, cwd, outSet);
+        } else if (typeof toolArgs === "string") {
+          try {
+            inspectToolArguments(JSON.parse(toolArgs), cwd, outSet);
+          } catch {
+            extractPathsFromText(toolArgs, cwd, outSet);
+          }
+        }
+
+        // ToolResult blocks
+        if (b.content && b.content !== content) {
+          inspectContent(b.content, cwd, outSet);
+        }
+      }
+    }
+  }
+}
+
+function inspectToolArguments(
+  args: Record<string, unknown>,
+  cwd: string,
+  outSet: Set<string>
+): void {
+  if (typeof args.path === "string") addNormalizedPath(args.path, cwd, outSet);
+  if (typeof args.filePath === "string") addNormalizedPath(args.filePath, cwd, outSet);
+  if (typeof args.file === "string") addNormalizedPath(args.file, cwd, outSet);
+  if (typeof args.target === "string") addNormalizedPath(args.target, cwd, outSet);
+  if (typeof args.filename === "string") addNormalizedPath(args.filename, cwd, outSet);
+
+  if (Array.isArray(args.paths)) {
+    for (const p of args.paths) {
+      if (typeof p === "string") addNormalizedPath(p, cwd, outSet);
+    }
+  }
+  if (Array.isArray(args.files)) {
+    for (const p of args.files) {
+      if (typeof p === "string") addNormalizedPath(p, cwd, outSet);
+    }
+  }
+
+  // Shell/Bash command scanning
+  if (typeof args.command === "string") {
+    extractPathsFromText(args.command, cwd, outSet);
+  }
 }
 
 function addNormalizedPath(
@@ -146,7 +234,27 @@ function addNormalizedPath(
   outSet: Set<string>
 ): void {
   if (!rawPath || typeof rawPath !== "string") return;
-  const clean = rawPath.trim().replace(/^['"]|['"]$/g, "");
+  // Ignore URLs or protocol URIs like rule:// or https:// or skill://
+  if (
+    rawPath.startsWith("http://") ||
+    rawPath.startsWith("https://") ||
+    rawPath.startsWith("rule://") ||
+    rawPath.startsWith("skill://")
+  ) {
+    return;
+  }
+
+  // Strip line numbers or queries if present (e.g. "foo.ts:10-20" or "foo.ts?query")
+  let clean = rawPath.trim().replace(/^['"]|['"]$/g, "");
+  const colonIdx = clean.indexOf(":");
+  if (colonIdx > 1 && !clean.includes(":\\")) {
+    clean = clean.slice(0, colonIdx);
+  }
+  const qIdx = clean.indexOf("?");
+  if (qIdx !== -1) {
+    clean = clean.slice(0, qIdx);
+  }
+
   if (!clean) return;
 
   // Normalize relative to cwd

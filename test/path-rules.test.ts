@@ -175,23 +175,100 @@ API standards: Always use zod.`
   });
 });
 
-describe("Active Path Extractor & Matcher", () => {
-  it("extracts paths from current turn only and isolates previous turns", () => {
+describe("Active Path Extractor & Native AgentMessage Shapes", () => {
+  it("extracts paths from structured native AgentMessage content blocks", () => {
     const cwd = "/app";
     const messages: ChatMessage[] = [
-      // Turn 1 (Old)
-      { role: "user", content: "Check old/legacy.ts" },
-      { role: "assistant", input: { path: "/app/old/legacy.ts" }, content: "Done" },
-      // Turn 2 (Current)
-      { role: "user", content: "Please inspect src/api/user.ts" },
-      { role: "assistant", input: { path: "/app/src/db/client.ts" }, content: "" },
+      // Turn 1 (Old turn — should be ignored)
+      {
+        role: "user",
+        content: [{ type: "text", text: "Look at old/stale.ts" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call_1",
+            name: "read",
+            arguments: { path: "/app/old/stale.ts" },
+          },
+        ],
+      },
+      // Turn 2 (Current turn)
+      {
+        role: "user",
+        content: [{ type: "text", text: "Please review src/api/auth.ts and app/routes.tsx" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "thinking",
+            text: "Inspecting database client in src/db/client.ts",
+          },
+          {
+            type: "toolCall",
+            id: "call_2",
+            name: "read",
+            arguments: { path: "/app/src/db/client.ts" },
+          },
+          {
+            type: "toolCall",
+            id: "call_3",
+            name: "bash",
+            arguments: { command: "git diff src/models/user.ts" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "toolResult",
+            id: "call_2",
+            content: "export const db = ... found in src/db/pool.ts:10-25",
+          },
+        ],
+      },
     ];
 
     const activePaths = extractActivePaths(messages, cwd);
-    expect(activePaths).toContain("src/api/user.ts");
+    expect(activePaths).toContain("src/api/auth.ts");
+    expect(activePaths).toContain("app/routes.tsx");
     expect(activePaths).toContain("src/db/client.ts");
-    // Old turn path must be evicted
-    expect(activePaths).not.toContain("old/legacy.ts");
+    expect(activePaths).toContain("src/models/user.ts");
+    expect(activePaths).toContain("src/db/pool.ts");
+
+    // Old turn paths must be evicted
+    expect(activePaths).not.toContain("old/stale.ts");
+  });
+
+  it("supports OpenAI-style tool_calls with JSON-stringified arguments", () => {
+    const cwd = "/app";
+    const messages: ChatMessage[] = [
+      {
+        role: "user",
+        content: "Modify component",
+      },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          {
+            id: "call_edit",
+            type: "function",
+            function: {
+              name: "edit",
+              arguments: JSON.stringify({ path: "src/components/Header.tsx" }),
+            },
+          },
+        ],
+      },
+    ];
+
+    const activePaths = extractActivePaths(messages, cwd);
+    expect(activePaths).toContain("src/components/Header.tsx");
   });
 
   it("matches active paths against rules and sorts by priority", () => {
@@ -273,7 +350,7 @@ describe("Injector & Prompt Budget", () => {
 });
 
 describe("End-to-End Extension Hook Flow", () => {
-  it("registers hooks and injects rules on context event", async () => {
+  it("registers hooks and injects rules on context event with structured messages", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-e2e-test-"));
     const rulesDir = path.join(tmpDir, ".omp", "rules");
     await fs.mkdir(rulesDir, { recursive: true });
@@ -319,14 +396,29 @@ Use Tailwind for UI.`
       },
     };
 
+    // Native AgentMessage structure
     const messages: ChatMessage[] = [
-      { role: "user", content: "Editing src/ui/Header.tsx" },
+      {
+        role: "user",
+        content: [{ type: "text", text: "Please update the navbar component" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "tc_read_1",
+            name: "read",
+            arguments: { path: `${tmpDir}/src/ui/Navbar.tsx` },
+          },
+        ],
+      },
     ];
 
     if (contextHandler) {
       const result = await contextHandler({ messages }, ctx);
       expect(result).toBeDefined();
-      expect(result?.messages?.length).toBe(2);
+      expect(result?.messages?.length).toBe(3);
       expect(String(result?.messages?.[0]?.content)).toContain("Use Tailwind for UI.");
     }
 
