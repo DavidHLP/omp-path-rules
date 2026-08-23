@@ -1,0 +1,30 @@
+{
+  "comment": "Explicit, expiring allowlist of accepted high-severity npm-audit advisories. Every entry needs a justification and an expiry date; expired entries FAIL the security gate to force re-review.",
+  "entries": [
+    {
+      "name": "@oh-my-pi/pi-coding-agent",
+      "reason": "The extension targets the pinned OMP CLI 18.0.0 runtime. All current high advisories are transitive via @huggingface/transformers -> onnxruntime-node/sharp/adm-zip inside that package; the only available fix is a semver-major downgrade to 15.5.15, which breaks the target runtime.",
+      "expires": "2026-09-30"
+    },
+    {
+      "name": "@huggingface/transformers",
+      "reason": "Transitive via @oh-my-pi/pi-coding-agent@18.0.0 (see that entry).",
+      "expires": "2026-09-30"
+    },
+    {
+      "name": "onnxruntime-node",
+      "reason": "Transitive via @oh-my-pi/pi-coding-agent@18.0.0 (see that entry).",
+      "expires": "2026-09-30"
+    },
+    {
+      "name": "sharp",
+      "reason": "Transitive via @oh-my-pi/pi-coding-agent@18.0.0 (see that entry).",
+      "expires": "2026-09-30"
+    },
+    {
+      "name": "adm-zip",
+      "reason": "Transitive via @oh-my-pi/pi-coding-agent@18.0.0 (see that entry).",
+      "expires": "2026-09-30"
+    }
+  ]
+}
