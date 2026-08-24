@@ -80,6 +80,7 @@ export default function ompPathRules(pi: ExtensionAPI): void {
   const scanner = new RuleScanner();
   let currentCwd = process.cwd();
   let lastNotifiedRuleSet = "";
+  let lastInjectedRuleSet = "";
   const activeReads = new Map<string, ReadTelemetry>();
   const pendingReads = new Map<string, ReadTelemetry>();
   let lastTurnUsage: TurnUsage | undefined;
@@ -87,6 +88,7 @@ export default function ompPathRules(pi: ExtensionAPI): void {
   // 1. Session start lifecycle hook
   pi.on("session_start", async (_event, ctx) => {
     lastNotifiedRuleSet = "";
+    lastInjectedRuleSet = "";
     currentCwd = ctx.cwd;
     activeReads.clear();
     pendingReads.clear();
@@ -180,27 +182,36 @@ export default function ompPathRules(pi: ExtensionAPI): void {
       const rules = await scanner.scan(ctx.cwd, pi.logger);
       const activePaths = extractActivePaths(messages, ctx.cwd);
       if (activePaths.length === 0) {
-        const cleanMessages = injectRulesIntoMessages(messages, null);
-        ctx.ui?.setStatus?.("path-rules", undefined);
-        if (lastNotifiedRuleSet !== "") {
-          ctx.ui?.notify?.("[path-rules] Cleared active rules (no matching paths).", "info");
-          lastNotifiedRuleSet = "";
-        }
-        return { messages: cleanMessages };
+        // Session-scoped retention preserves the prompt-cache prefix; old rule blocks
+        // remain in the conversation and are not removed when no path is active.
+        return { messages };
+      }
+      const matched = matchActiveRules(rules, activePaths);
+      if (matched.length === 0) {
+        return { messages };
       }
 
-      const matched = matchActiveRules(rules, activePaths);
+      const ruleSetKey = matched
+        .map(
+          (item) =>
+            `${item.rule.id}:${item.rule.rawSignature}:${[...item.matchedPaths]
+              .sort()
+              .join(",")}`
+        )
+        .join("|");
+      if (ruleSetKey === lastInjectedRuleSet) {
+        return { messages };
+      }
+
       const rulesBlock = buildRulesPromptBlock(matched);
       const updatedMessages = injectRulesIntoMessages(messages, rulesBlock);
+      lastInjectedRuleSet = ruleSetKey;
 
       ctx.ui?.setStatus?.(
         "path-rules",
         matched.length > 0 ? `rules: ${matched.length} active` : undefined
       );
 
-      const ruleSetKey = matched
-        .map((item) => `${item.rule.id}:${[...item.matchedPaths].sort().join(",")}`)
-        .join("|");
       if (ruleSetKey !== lastNotifiedRuleSet && matched.length > 0) {
         const theme = ctx.ui?.theme;
         const color = (name: string, text: string): string => theme?.fg(name, text) ?? text;

@@ -8,14 +8,14 @@ Pre-injects relevant rule bodies into the LLM context *before* inference when cu
 
 ## Features
 
-- **Active Pre-Turn Injection**: Automatically injects matching rule markdown bodies into `messages` before the model inference runs (Cursor MDC-style experience).
-- **Clean Coexistence with Native TTSR**: Scans native `.omp/rules/*.md` and `~/.omp/agent/rules/*.md`, cleanly separating:
-  - **TTSR Stream Rules** (`condition`, `astCondition`, `ttsr_trigger`, `ttsrTrigger` non-empty) -> Ignored; left exclusively to OMP's native real-time stream engine.
-  - **Always-Apply Rules** (`alwaysApply: true` without trigger conditions) -> Ignored; already injected into system prompt by OMP core.
+- **Active Pre-Turn Injection**: Automatically injects matching rule markdown bodies into `messages` before model inference.
+- **Clean Coexistence with Native TTSR**: Scans project `.omp/rules/`, `~/.omp/rules/`, and `~/.omp/agent/rules/` (or the directory selected by `PI_CODING_AGENT_DIR`), cleanly separating:
+  - **TTSR Stream Rules** (`condition`, `astCondition`, `ast_condition`, `ttsr_trigger`, or `ttsrTrigger` non-empty) -> Ignored; left exclusively to OMP's native real-time stream engine.
+  - **Always-Apply Rules** (`alwaysApply: true` without trigger conditions) -> Ignored; already handled by OMP core.
   - **Path Rules** (`globs`/`paths`, or scope-only rules like `scope: tool:edit(*.ts)` without trigger conditions) -> Actively matched and dynamically injected.
-- **Single-Turn Transient Scope**: Only matches paths in the *current* turn (latest user prompt + active tool executions). Exiting a file immediately evicts its rules to keep context minimal.
-- **High-Performance Invalidation**: Uses compound directory + `mtimeMs` + `size` signatures for hot-reloading with zero background watcher leaks.
-- **Token Budget Protection**: Configurable character/token budget with automatic priority-based truncation.
+- **Single-Turn Transient Scope**: Matches paths extracted from the latest user message and subsequent tool activity in the current message array. Previous synthetic rule messages are removed before refreshed rules are injected.
+- **Content-Hash Invalidation**: Reads and hashes discovered Markdown files on each scan; unchanged files reuse parsed results, while same-size edits are still detected.
+- **Token Budget Protection**: Uses a fixed default character budget of 16,000 for the generated block; the exported builder supports a `maxCharacters` override.
 - **Fail-Open Resilience**: Malformed YAML or file I/O errors log a warning and skip the damaged rule without crashing the agent session.
 
 ---
@@ -41,12 +41,13 @@ priority: 100
 
 | Field | Type | Description |
 |---|---|---|
-| `globs` / `paths` | `string[]` \| `string` | Glob patterns to match against active working files. |
-| `scope` (fallback) | `string` \| `string[]` | If `globs` is omitted and no TTSR condition is present, extracts globs from `tool:edit(<glob>)` tokens. |
+| `globs` | `string[]` \| `string` | Glob patterns matched against extracted active paths. |
+| `paths` | `string[]` \| `string` | Accepted by the frontmatter type, but currently not used by the scanner for matching. Prefer `globs`. |
+| `scope` (fallback) | `string` \| `string[]` | If `globs` is omitted, extracts globs from `tool:edit(<glob>)`-style tokens. |
 | `description` | `string` | Human-readable summary. |
-| `priority` | `number` | Sorting weight when multiple rules match (default `100`, higher runs first). |
+| `priority` | `number` | Sorting weight when multiple rules match (default `100`; higher runs first). |
 
-*Note: Rules declaring non-empty TTSR triggers (`condition`, `astCondition`, `ttsr_trigger`, `ttsrTrigger`) or `alwaysApply: true` are recognized as native OMP TTSR/Always-Apply and skipped by this extension to prevent duplicate injection.*
+*Note: Rules declaring non-empty TTSR triggers (`condition`, `astCondition`, `ast_condition`, `ttsr_trigger`, `ttsrTrigger`) or `alwaysApply: true` are recognized as native OMP TTSR/Always-Apply and skipped by this extension to prevent duplicate injection.*
 
 
 ## Designing Path Rules and TTSR Rules
@@ -113,16 +114,17 @@ path rule -> tell the LLM what to do before generation
 TTSR rule  -> inspect or interrupt execution when its condition is met
 ```
 
-Path-rule activation is transient: rules are recomputed for each turn and
-removed when the current active paths no longer match. This is separate from
-the native TTSR lifecycle.
+Path-rule activation is session-retained: once injected, a rule block remains
+in the conversation even when later turns have no matching active paths. This
+preserves a stable prompt-cache prefix, but historical rule blocks can increase
+token usage and retain older guidance for the rest of the session.
 
 When the extension has a UI, the `path-rules` status shows the number of
 currently active rules after each context refresh. At session start it first
 shows the number of discovered path rules; the context status then replaces
 that value with the number of rules matched for the current turn. The
 extension also sends a notification when the active rule set changes,
-including the matched rule IDs. Repeated context refreshes with the
+including matched paths and rule labels. Repeated context refreshes with the
 same active rules do not create duplicate notifications.
 ---
 

@@ -18,18 +18,19 @@ Native OMP does not automatically pre-inject the full markdown body of path-scop
    - Rules with `alwaysApply: true` are classified as `always_apply` and skipped to prevent duplicate system prompt injection.
    - Rules declaring `globs` / `paths` (or scope-only tokens like `scope: tool:edit(*.ts)`) without TTSR triggers are classified as `path_rule` and actively matched.
 
-2. **Single-Turn Transient Scope**:
-   - Active paths are extracted only from the current turn (the latest user message and its subsequent tool executions).
-   - Rules are evicted immediately when focus shifts to unrelated files, minimizing token consumption.
+2. **Session-Retained Rule Context**:
+   - Once injected, a path-rule block remains in the conversation even when later turns have no matching active paths.
+   - This preserves a stable prompt-cache prefix, at the cost of historical token growth and older guidance remaining in the session.
 
-3. **Compound Signature Cache Invalidation**:
-   - Dynamic hot-reloading is achieved by computing a per-file signature (`filename:mtimeMs:size`) during `pi.on("context")` calls.
-   - Avoids resident file watcher daemons, preventing file handle leaks and cross-platform watcher instability.
+3. **Content-Hash Cache Invalidation**:
+   - Each discovered Markdown file is read and hashed with SHA-256 on every scan. The cached parsed rule is reused only when the content hash is unchanged.
+   - This avoids resident file watcher daemons and detects same-size edits even on filesystems with coarse timestamp resolution.
 
 4. **Message Pipeline Injection**:
-   - Matched rules are assembled into an `<active_path_rules>` block within a configured character budget (default 16,000 chars) and prepended as a synthetic system message in `event.messages`.
+   - Matched rules are assembled into an `<active_path_rules>` block within the fixed default character budget of 16,000 characters (the exported builder accepts an optional `maxCharacters` override) and prepended as a synthetic `developer` message containing a structured text block in `event.messages`.
+   - The extension removes its previous synthetic rules message before prepending the refreshed one, so repeated context refreshes remain idempotent.
 
 ## Consequences
 - Clean, non-interfering coexistence with OMP native capabilities.
-- Zero-latency hot reloading of rule modifications without session restarts.
-- Strict token budget and fail-open resilience.
+- Content changes are detected on the next scan without session restarts, at the cost of reading and hashing rule files on each scan.
+- Strict character budget and fail-open resilience.

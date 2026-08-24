@@ -140,33 +140,26 @@ Dangerous eval statement detected in stream!`
     console.log("✓ Scenario 1 Passed: HTTP request payload verified to contain Project API rule and Global User rule.");
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SCENARIO 2: Non-matching Path Eviction (Docs turn)
+    // SCENARIO 2: Non-matching Path (Isolated CLI turn)
     // ─────────────────────────────────────────────────────────────────────────
-    console.log("\n--- Scenario 2: Path eviction on non-matching path (docs/readme.md) ---");
+    console.log("\n--- Scenario 2: No path rules in isolated non-matching turn (docs/readme.md) ---");
     serverInstance.clearHistory();
     const res2 = await executeOmpTurn(tmpProject, extensionPath, "Please update docs/readme.md", env);
     if (res2.code !== 0) {
       throw new Error(`Scenario 2 CLI execution failed with exit code ${res2.code}:\nSTDOUT: ${res2.stdout}\nSTDERR: ${res2.stderr}`);
     }
 
-    // Locate the request carrying this turn's user prompt (not a fixed index)
     const payloadText2 = findRequestBody(
       serverInstance.receivedBodies,
       "Please update docs/readme.md",
       "Scenario 2 Failed"
     );
 
-    // Assert actual eviction of rule tags and body contents
+    // This scenario starts a fresh CLI process, so it has no prior session-retained block.
     if (payloadText2.includes("<active_path_rules>")) {
-      throw new Error(`Scenario 2 Failed: <active_path_rules> was unexpectedly found in non-matching request payload: ${payloadText2}`);
+      throw new Error(`Scenario 2 Failed: isolated non-matching request unexpectedly contained path rules: ${payloadText2}`);
     }
-    if (payloadText2.includes("Always validate payloads with Zod schemas.")) {
-      throw new Error(`Scenario 2 Failed: API rule body unexpectedly remained in non-matching request payload: ${payloadText2}`);
-    }
-    if (payloadText2.includes("Enforce strict TypeScript formatting.")) {
-      throw new Error(`Scenario 2 Failed: Global TS rule unexpectedly remained in non-matching request payload: ${payloadText2}`);
-    }
-    console.log("✓ Scenario 2 Passed: HTTP request payload verified to have zero path rules for docs/readme.md.");
+    console.log("✓ Scenario 2 Passed: isolated non-matching turn contained no path rules.");
 
     // ─────────────────────────────────────────────────────────────────────────
     // SCENARIO 3: TTSR Rule Isolation (Dedicated CLI Turn)

@@ -488,4 +488,54 @@ Use Tailwind for UI.`
 
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
+  it("retains injected rules across non-matching turns in one session", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-retained-rules-test-"));
+    const rulesDir = path.join(tmpDir, ".omp", "rules");
+    await fs.mkdir(rulesDir, { recursive: true });
+    await fs.writeFile(
+      path.join(rulesDir, "api.md"),
+      `---
+globs: ["src/api/**/*.ts"]
+---
+Use Zod for API validation.`
+    );
+
+    let contextHandler:
+      | ((event: ContextEvent, ctx: ExtensionContext) =>
+          | Promise<{ messages?: ChatMessage[] } | void>
+          | { messages?: ChatMessage[] } | void)
+      | undefined;
+    const mockPi: ExtensionAPI = {
+      setLabel() {},
+      on: ((event, handler) => {
+        if (event === "context") contextHandler = handler as typeof contextHandler;
+      }) as ExtensionAPI["on"],
+      registerCommand() {},
+      logger: { debug() {}, info() {}, warn() {}, error() {} },
+    };
+
+    ompPathRules(mockPi);
+    expect(contextHandler).toBeDefined();
+    const ctx: ExtensionContext = { cwd: tmpDir, ui: { setStatus() {}, notify() {} } };
+    const firstMessages: ChatMessage[] = [
+      {
+        role: "user",
+        content: [{ type: "text", text: "Update src/api/users.ts" }],
+      },
+    ];
+
+    const first = await contextHandler!({ messages: firstMessages }, ctx);
+    expect(first?.messages?.[0]?.content).toContainEqual(
+      expect.objectContaining({ text: expect.stringContaining("Use Zod for API validation.") })
+    );
+
+    const secondInput = [
+      ...(first?.messages ?? firstMessages),
+      { role: "user", content: [{ type: "text", text: "Now inspect docs/readme.md" }] },
+    ] as ChatMessage[];
+    const second = await contextHandler!({ messages: secondInput }, ctx);
+    expect(JSON.stringify(second?.messages)).toContain("Use Zod for API validation.");
+
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
 });
