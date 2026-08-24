@@ -56,10 +56,6 @@ function formatReadStats(read: ReadTelemetry | undefined): string {
   return stats.length > 0 ? ` (${stats.join(", ")})` : "";
 }
 
-function isProjectContextPath(value: string): boolean {
-  return value === ".omp" || value.startsWith(".omp/");
-}
-
 /**
  * omp-path-rules Extension Entrypoint
  */
@@ -194,24 +190,24 @@ export default function ompPathRules(pi: ExtensionAPI): void {
         const theme = ctx.ui?.theme;
         const color = (name: string, text: string): string => theme?.fg(name, text) ?? text;
         const displayPaths = [
-          ...new Set(
-            matched.flatMap((item) =>
-              item.matchedPaths.filter(isProjectContextPath)
-            )
-          ),
+          ...new Set(matched.flatMap((item) => item.matchedPaths)),
         ].sort();
-        const pathLines = displayPaths.map((pathValue, index) => {
-          const branch = index === displayPaths.length - 1 ? "'--" : "|--";
-          const read = activeReads.get(pathValue);
-          return `   ${color("dim", branch)} ${color("muted", `${pathValue}${formatReadStats(read)}`)}`;
-        });
-        if (pathLines.length > 0) {
-          const message = [
-            `* ${color("text", "Loaded rules")} ${color("dim", `(${matched.length})`)}`,
-            ...pathLines,
-          ].join("\n");
-          ctx.ui?.notify?.(message, "info");
-        }
+        const treeLines =
+          displayPaths.length > 0
+            ? displayPaths.map((pathValue, index) => {
+                const branch = index === displayPaths.length - 1 ? "'--" : "|--";
+                const read = activeReads.get(pathValue);
+                return `   ${color("dim", branch)} ${color("muted", `${pathValue}${formatReadStats(read)}`)}`;
+              })
+            : matched.map((item, index) => {
+                const branch = index === matched.length - 1 ? "'--" : "|--";
+                return `   ${color("dim", branch)} ${color("success", item.rule.id)}`;
+              });
+        const message = [
+          `* ${color("text", "Loaded rules")} ${color("dim", `(${matched.length})`)}`,
+          ...treeLines,
+        ].join("\n");
+        ctx.ui?.notify?.(message, "info");
         lastNotifiedRuleSet = ruleSetKey;
       }
 
