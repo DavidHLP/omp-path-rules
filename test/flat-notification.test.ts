@@ -5,7 +5,7 @@ import * as path from "node:path";
 import ompPathRules from "../src/index.js";
 import type { ExtensionAPI, ExtensionContext } from "../src/types.js";
 
-it("notifies matched project paths with read telemetry when available", async () => {
+it("notifies matched project paths with hierarchical matched rules and telemetry", async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "omp-notification-test-"));
   await fs.mkdir(path.join(cwd, ".omp", "rules"), { recursive: true });
   await fs.writeFile(
@@ -83,13 +83,13 @@ it("notifies matched project paths with read telemetry when available", async ()
 
   expect(result).toBeDefined();
   expect(notification).toMatch(
-    /^\* Loaded rules \(1\)\n   \|-- \.omp\/java-backend-path \(5\.5K, 73 lines, 0\.0s\)\n   '-- src\/Main\.java$/
+    /^\* Loaded rules \(1\)\n   \|-- \.omp\/java-backend-path \(5\.5K, 73 lines, 0\.0s\)\n   \|   '-- java-backend\n   '-- src\/Main\.java\n       '-- java-backend$/
   );
 
   await fs.rm(cwd, { recursive: true, force: true });
 });
 
-it("notifies service/backend source paths with read telemetry", async () => {
+it("notifies service/backend source paths with hierarchical rules and telemetry", async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "omp-notification-test-"));
   await fs.mkdir(path.join(cwd, ".omp", "rules"), { recursive: true });
   await fs.writeFile(
@@ -170,6 +170,13 @@ it("notifies service/backend source paths with read telemetry", async () => {
   expect(notification).toContain("* Loaded rules (2)");
   expect(notification).toContain(samplePath);
   expect(notification).toContain("5.3K, 34 lines");
+  expect(notification).toContain("java-backend-path");
+  expect(notification).toContain("springboot-rules-path");
+
+  // Verify tree indentation format for child rules
+  expect(notification).toMatch(
+    /services\/api\/submission-api\/src\/main\/java\/com\/ulticode\/submission\/api\/service\/SubmissionFencePort\.java \(5\.3K, 34 lines, 0\.0s\)\n       \|-- java-backend-path\n       '-- springboot-rules-path/
+  );
 
   await fs.rm(cwd, { recursive: true, force: true });
 });

@@ -192,17 +192,38 @@ export default function ompPathRules(pi: ExtensionAPI): void {
         const displayPaths = [
           ...new Set(matched.flatMap((item) => item.matchedPaths)),
         ].sort();
-        const treeLines =
-          displayPaths.length > 0
-            ? displayPaths.map((pathValue, index) => {
-                const branch = index === displayPaths.length - 1 ? "'--" : "|--";
-                const read = activeReads.get(pathValue);
-                return `   ${color("dim", branch)} ${color("muted", `${pathValue}${formatReadStats(read)}`)}`;
-              })
-            : matched.map((item, index) => {
-                const branch = index === matched.length - 1 ? "'--" : "|--";
-                return `   ${color("dim", branch)} ${color("success", item.rule.id)}`;
-              });
+
+        const treeLines: string[] = [];
+        if (displayPaths.length > 0) {
+          displayPaths.forEach((pathValue, pathIndex) => {
+            const isLastPath = pathIndex === displayPaths.length - 1;
+            const pathBranch = isLastPath ? "'--" : "|--";
+            const childIndent = isLastPath ? "    " : "|   ";
+            const read = activeReads.get(pathValue);
+            treeLines.push(
+              `   ${color("dim", pathBranch)} ${color("muted", `${pathValue}${formatReadStats(read)}`)}`
+            );
+
+            const rulesForPath = matched.filter((item) =>
+              item.matchedPaths.includes(pathValue)
+            );
+            rulesForPath.forEach((ruleItem, ruleIndex) => {
+              const isLastRule = ruleIndex === rulesForPath.length - 1;
+              const ruleBranch = isLastRule ? "'--" : "|--";
+              treeLines.push(
+                `   ${color("dim", `${childIndent}${ruleBranch}`)} ${color("success", ruleItem.rule.id)}`
+              );
+            });
+          });
+        } else {
+          matched.forEach((item, index) => {
+            const branch = index === matched.length - 1 ? "'--" : "|--";
+            treeLines.push(
+              `   ${color("dim", branch)} ${color("success", item.rule.id)}`
+            );
+          });
+        }
+
         const message = [
           `* ${color("text", "Loaded rules")} ${color("dim", `(${matched.length})`)}`,
           ...treeLines,
