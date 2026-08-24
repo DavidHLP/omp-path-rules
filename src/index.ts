@@ -1,3 +1,4 @@
+import * as os from "node:os";
 import * as path from "node:path";
 import { registerPathRulesCommands } from "./commands.js";
 import {
@@ -39,6 +40,20 @@ function normalizeProjectRelativePath(rawPath: string, cwd: string): string {
   const relative = path.isAbsolute(clean) ? path.relative(cwd, clean) : clean;
   const posixRelative = relative.replace(/\\/g, "/").replace(/^\.\//, "");
   return posixRelative && !posixRelative.startsWith("../") ? posixRelative : "";
+}
+
+function formatRuleDisplayPath(filePath: string, cwd: string): string {
+  if (!filePath) return "";
+  const posixPath = filePath.replace(/\\/g, "/");
+  const posixCwd = cwd.replace(/\\/g, "/");
+  if (posixPath.startsWith(posixCwd + "/")) {
+    return posixPath.slice(posixCwd.length + 1);
+  }
+  const homeDir = os.homedir().replace(/\\/g, "/");
+  if (posixPath.startsWith(homeDir + "/")) {
+    return `~/${posixPath.slice(homeDir.length + 1)}`;
+  }
+  return posixPath;
 }
 
 function formatBytes(bytes: number): string {
@@ -210,16 +225,24 @@ export default function ompPathRules(pi: ExtensionAPI): void {
             rulesForPath.forEach((ruleItem, ruleIndex) => {
               const isLastRule = ruleIndex === rulesForPath.length - 1;
               const ruleBranch = isLastRule ? "'--" : "|--";
+              const ruleLabel = formatRuleDisplayPath(
+                ruleItem.rule.filePath,
+                currentCwd
+              );
               treeLines.push(
-                `   ${color("dim", `${childIndent}${ruleBranch}`)} ${color("success", ruleItem.rule.id)}`
+                `   ${color("dim", `${childIndent}${ruleBranch}`)} ${color("success", ruleLabel)}`
               );
             });
           });
         } else {
           matched.forEach((item, index) => {
             const branch = index === matched.length - 1 ? "'--" : "|--";
+            const ruleLabel = formatRuleDisplayPath(
+              item.rule.filePath,
+              currentCwd
+            );
             treeLines.push(
-              `   ${color("dim", branch)} ${color("success", item.rule.id)}`
+              `   ${color("dim", branch)} ${color("success", ruleLabel)}`
             );
           });
         }
