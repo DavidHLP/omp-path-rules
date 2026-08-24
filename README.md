@@ -13,7 +13,7 @@ Pre-injects relevant rule bodies into the LLM context *before* inference when cu
   - **TTSR Stream Rules** (`condition`, `astCondition`, `ast_condition`, `ttsr_trigger`, or `ttsrTrigger` non-empty) -> Ignored; left exclusively to OMP's native real-time stream engine.
   - **Always-Apply Rules** (`alwaysApply: true` without trigger conditions) -> Ignored; already handled by OMP core.
   - **Path Rules** (`globs`/`paths`, or scope-only rules like `scope: tool:edit(*.ts)` without trigger conditions) -> Actively matched and dynamically injected.
-- **Single-Turn Transient Scope**: Matches paths extracted from the latest user message and subsequent tool activity in the current message array. Previous synthetic rule messages are removed before refreshed rules are injected.
+- **Session-Retained Rule Context**: Matches paths extracted from the latest user message and subsequent tool activity in the current message array. Once injected, rule context remains available for the session to preserve prompt-cache prefix stability.
 - **Content-Hash Invalidation**: Reads and hashes discovered Markdown files on each scan; unchanged files reuse parsed results, while same-size edits are still detected.
 - **Token Budget Protection**: Uses a fixed default character budget of 16,000 for the generated block; the exported builder supports a `maxCharacters` override.
 - **Fail-Open Resilience**: Malformed YAML or file I/O errors log a warning and skip the damaged rule without crashing the agent session.

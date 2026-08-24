@@ -86,7 +86,7 @@ jobs:
               throw new Error("TTSR rule was incorrectly injected into prompt context");
             }
 
-            // Simulate turn 2 (moving away from src/api to docs/readme.md -> rule should be evicted)
+            // Simulate turn 2 (moving away from src/api to docs/readme.md -> rule should be retained)
             const res2 = await contextHandler({
               messages: [
                 ...res1.messages,
@@ -103,8 +103,8 @@ jobs:
 
             console.log("Turn 2 Messages count:", res2.messages.length);
             const hasRuleInTurn2 = res2.messages.some(m => JSON.stringify(m.content).includes("Always validate with Zod."));
-            if (hasRuleInTurn2) {
-              throw new Error("Single-turn transient eviction failed: rule remained in context");
+            if (!hasRuleInTurn2) {
+              throw new Error("Session-retained failed: rule was evicted but should remain for cache prefix stability");
             }
 
             console.log("All context lifecycle checks passed successfully!");
