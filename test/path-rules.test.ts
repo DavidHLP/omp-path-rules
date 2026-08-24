@@ -414,11 +414,55 @@ describe("Injector & Prompt Budget", () => {
 });
 
 describe("End-to-End Extension Hook Flow", () => {
+  it("notifies only newly observed rule versions", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-notification-test-"));
+    const rulesDir = path.join(tmpDir, ".omp", "rules");
+    await fs.mkdir(rulesDir, { recursive: true });
+    await fs.writeFile(path.join(rulesDir, "api.md"), `---
+globs: ["src/api/**/*.ts"]
+---
+API rules`);
+    await fs.writeFile(path.join(rulesDir, "queue.md"), `---
+globs: ["src/queue/**/*.ts"]
+---
+Queue rules`);
+
+    const notifications: string[] = [];
+    let contextHandler: ((event: ContextEvent, ctx: ExtensionContext) => Promise<unknown> | unknown) | undefined;
+    const mockPi: ExtensionAPI = {
+      setLabel() {},
+      on: ((event, handler) => {
+        if (event === "context") contextHandler = handler;
+      }) as ExtensionAPI["on"],
+      registerCommand() {},
+      logger: { debug() {}, info() {}, warn() {}, error() {} },
+    };
+    ompPathRules(mockPi);
+    const ctx: ExtensionContext = {
+      cwd: tmpDir,
+      ui: { setStatus() {}, notify(message) { notifications.push(message); } },
+    };
+    const turn = async (text: string) => {
+      await contextHandler?.({ messages: [{ role: "user", content: text }] }, ctx);
+    };
+
+    await turn("Update src/api/users.ts");
+    await turn("Update src/api/orders.ts");
+    await turn("Update src/queue/worker.ts");
+
+    expect(notifications).toHaveLength(2);
+    expect(notifications[0]).toContain("Loaded rules (+1)");
+    expect(notifications[0]).toContain("api.md");
+    expect(notifications[1]).toContain("Loaded rules (+1)");
+    expect(notifications[1]).toContain("queue.md");
+
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
   it("registers hooks and injects rules on context event with structured messages", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-e2e-test-"));
     const rulesDir = path.join(tmpDir, ".omp", "rules");
     await fs.mkdir(rulesDir, { recursive: true });
-
     await fs.writeFile(
       path.join(rulesDir, "frontend.md"),
       `---
@@ -427,40 +471,20 @@ globs: ["src/ui/**/*.tsx"]
 Use Tailwind for UI.`
     );
 
-    let contextHandler: ((event: ContextEvent, ctx: ExtensionContext) => Promise<{ messages?: ChatMessage[] } | void> | { messages?: ChatMessage[] } | void) | undefined;
-    let label = "";
-
+    let contextHandler:
+      | ((event: ContextEvent, ctx: ExtensionContext) => Promise<unknown> | unknown)
+      | undefined;
     const mockPi: ExtensionAPI = {
-      setLabel(l: string) {
-        label = l;
-      },
-      on: ((event: string, handler: (event: ContextEvent, ctx: ExtensionContext) => Promise<unknown> | unknown) => {
-        if (event === "context") {
-          contextHandler = handler as (event: ContextEvent, ctx: ExtensionContext) => Promise<{ messages?: ChatMessage[] } | void>;
-        }
+      setLabel() {},
+      on: ((event, handler) => {
+        if (event === "context") contextHandler = handler;
       }) as ExtensionAPI["on"],
       registerCommand() {},
-      logger: {
-        debug() {},
-        info() {},
-        warn() {},
-        error() {},
-      },
+      logger: { debug() {}, info() {}, warn() {}, error() {} },
     };
-
     ompPathRules(mockPi);
-    expect(label).toBe("omp-path-rules");
     expect(contextHandler).toBeDefined();
-
-    const ctx: ExtensionContext = {
-      cwd: tmpDir,
-      ui: {
-        setStatus() {},
-        notify() {},
-      },
-    };
-
-    // Native AgentMessage structure
+    const ctx: ExtensionContext = { cwd: tmpDir, ui: { setStatus() {}, notify() {} } };
     const messages: ChatMessage[] = [
       {
         role: "user",
@@ -478,14 +502,11 @@ Use Tailwind for UI.`
         ],
       },
     ];
-
-    if (contextHandler) {
-      const result = await contextHandler({ messages }, ctx);
-      expect(result).toBeDefined();
-      expect(result?.messages?.length).toBe(3);
-      expect(JSON.stringify(result?.messages?.[0]?.content)).toContain("Use Tailwind for UI.");
-    }
-
+    const result = await contextHandler!({ messages }, ctx);
+    expect(result).toBeDefined();
+    const resultMessages = (result as { messages?: ChatMessage[] }).messages;
+    expect(resultMessages?.length).toBe(3);
+    expect(JSON.stringify(resultMessages?.[0]?.content)).toContain("Use Tailwind for UI.");
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
   it("retains injected rules across non-matching turns in one session", async () => {

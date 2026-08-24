@@ -21,6 +21,7 @@ Native OMP does not automatically pre-inject the full markdown body of path-scop
 2. **Session-Retained Rule Context**:
    - Once injected, a path-rule block remains in the conversation even when later turns have no matching active paths.
    - This preserves a stable prompt-cache prefix, at the cost of historical token growth and older guidance remaining in the session.
+   - The session's observed rule set is monotonic: it may only grow. Notifications report only rules newly added to that set; removals are never emitted.
 
 3. **Content-Hash Cache Invalidation**:
    - Each discovered Markdown file is read and hashed with SHA-256 on every scan. The cached parsed rule is reused only when the content hash is unchanged.

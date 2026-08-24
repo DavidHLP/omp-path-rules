@@ -9,10 +9,10 @@ import { extractActivePaths, matchActiveRules } from "./matcher.js";
 import { RuleScanner } from "./scanner.js";
 import type {
   ExtensionAPI,
+  MatchedRule,
   ReadTelemetry,
   TurnUsage,
 } from "./types.js";
-
 export * from "./types.js";
 export * from "./frontmatter.js";
 export * from "./scanner.js";
@@ -79,16 +79,15 @@ export default function ompPathRules(pi: ExtensionAPI): void {
 
   const scanner = new RuleScanner();
   let currentCwd = process.cwd();
-  let lastNotifiedRuleSet = "";
-  let lastInjectedRuleSet = "";
+  const cumulativeRules = new Map<string, MatchedRule>();
+  const notifiedRuleVersions = new Set<string>();
   const activeReads = new Map<string, ReadTelemetry>();
   const pendingReads = new Map<string, ReadTelemetry>();
   let lastTurnUsage: TurnUsage | undefined;
 
-  // 1. Session start lifecycle hook
   pi.on("session_start", async (_event, ctx) => {
-    lastNotifiedRuleSet = "";
-    lastInjectedRuleSet = "";
+    cumulativeRules.clear();
+    notifiedRuleVersions.clear();
     currentCwd = ctx.cwd;
     activeReads.clear();
     pendingReads.clear();
@@ -191,81 +190,57 @@ export default function ompPathRules(pi: ExtensionAPI): void {
         return { messages };
       }
 
-      const ruleSetKey = matched
-        .map(
-          (item) =>
-            `${item.rule.id}:${item.rule.rawSignature}:${[...item.matchedPaths]
-              .sort()
-              .join(",")}`
-        )
-        .join("|");
-      if (ruleSetKey === lastInjectedRuleSet) {
+      const newRules: MatchedRule[] = [];
+      for (const item of matched) {
+        const version = `${item.rule.id}:${item.rule.rawSignature}`;
+        if (!cumulativeRules.has(version)) {
+          cumulativeRules.set(version, item);
+          notifiedRuleVersions.add(version);
+          newRules.push(item);
+        }
+      }
+
+      const hasSyntheticRules = messages.some((message) => {
+        if (!message || typeof message !== "object") return false;
+        if (message.role !== "developer" && message.role !== "system") return false;
+        if (typeof message.content === "string") {
+          return message.content.includes("<active_path_rules>");
+        }
+        return Array.isArray(message.content) && message.content.some((block) => {
+          if (!block || typeof block !== "object") return false;
+          const text = (block as Record<string, unknown>).text;
+          return typeof text === "string" && text.includes("<active_path_rules>");
+        });
+      });
+      if (newRules.length === 0 && hasSyntheticRules) {
+        return { messages };
+      }
+      if (newRules.length === 0 && cumulativeRules.size === 0) {
         return { messages };
       }
 
-      const rulesBlock = buildRulesPromptBlock(matched);
-      const updatedMessages = injectRulesIntoMessages(messages, rulesBlock);
-      lastInjectedRuleSet = ruleSetKey;
-
-      ctx.ui?.setStatus?.(
-        "path-rules",
-        matched.length > 0 ? `rules: ${matched.length} active` : undefined
+      const cumulativeList = Array.from(cumulativeRules.values()).sort(
+        (a, b) => b.rule.priority - a.rule.priority || a.rule.id.localeCompare(b.rule.id)
       );
+      const rulesBlock = buildRulesPromptBlock(cumulativeList);
+      const updatedMessages = injectRulesIntoMessages(messages, rulesBlock);
 
-      if (ruleSetKey !== lastNotifiedRuleSet && matched.length > 0) {
+      ctx.ui?.setStatus?.("path-rules", `rules: ${cumulativeList.length} active`);
+
+      if (newRules.length > 0) {
         const theme = ctx.ui?.theme;
         const color = (name: string, text: string): string => theme?.fg(name, text) ?? text;
-        const displayPaths = [
-          ...new Set(matched.flatMap((item) => item.matchedPaths)),
-        ].sort();
-
-        const treeLines: string[] = [];
-        if (displayPaths.length > 0) {
-          displayPaths.forEach((pathValue, pathIndex) => {
-            const isLastPath = pathIndex === displayPaths.length - 1;
-            const pathBranch = isLastPath ? "'--" : "|--";
-            const childIndent = isLastPath ? "    " : "|   ";
-            const read = activeReads.get(pathValue);
-            treeLines.push(
-              `   ${color("dim", pathBranch)} ${color("muted", `${pathValue}${formatReadStats(read)}`)}`
-            );
-
-            const rulesForPath = matched.filter((item) =>
-              item.matchedPaths.includes(pathValue)
-            );
-            rulesForPath.forEach((ruleItem, ruleIndex) => {
-              const isLastRule = ruleIndex === rulesForPath.length - 1;
-              const ruleBranch = isLastRule ? "'--" : "|--";
-              const ruleLabel = formatRuleDisplayPath(
-                ruleItem.rule.filePath,
-                currentCwd
-              );
-              treeLines.push(
-                `   ${color("dim", `${childIndent}${ruleBranch}`)} ${color("success", ruleLabel)}`
-              );
-            });
-          });
-        } else {
-          matched.forEach((item, index) => {
-            const branch = index === matched.length - 1 ? "'--" : "|--";
-            const ruleLabel = formatRuleDisplayPath(
-              item.rule.filePath,
-              currentCwd
-            );
-            treeLines.push(
-              `   ${color("dim", branch)} ${color("success", ruleLabel)}`
-            );
-          });
-        }
-
+        const treeLines = newRules.map((item, index) => {
+          const branch = index === newRules.length - 1 ? "'--" : "|--";
+          const ruleLabel = formatRuleDisplayPath(item.rule.filePath, currentCwd);
+          return `   ${color("dim", branch)} ${color("success", ruleLabel)}`;
+        });
         const message = [
-          `* ${color("text", "Loaded rules")} ${color("dim", `(${matched.length})`)}`,
+          `* ${color("text", "Loaded rules")} ${color("dim", `(+${newRules.length})`)}`,
           ...treeLines,
         ].join("\n");
         ctx.ui?.notify?.(message, "info");
-        lastNotifiedRuleSet = ruleSetKey;
       }
-
       return { messages: updatedMessages };
     } catch (err) {
       pi.logger.warn(
