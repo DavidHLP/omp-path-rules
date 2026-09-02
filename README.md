@@ -138,6 +138,18 @@ matches of already observed rules do not create duplicate notifications.
 
 ## Installation
 
+### Install from GitHub
+
+```bash
+omp plugin install github:DavidHLP/omp-path-rules
+```
+
+Verify that the extension is installed and enabled:
+
+```bash
+omp plugin list
+```
+
 ### Local / Project Extension
 Link or load the extension directly in your project:
 ```bash
